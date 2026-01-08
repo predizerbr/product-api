@@ -10,4 +10,5 @@ public partial class AppDbContext
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<UserPersonalData> UserPersonalData => Set<UserPersonalData>();
+    public DbSet<UserAddress> UserAddresses => Set<UserAddress>();
 }

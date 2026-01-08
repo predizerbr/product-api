@@ -1,5 +1,3 @@
-using System;
-
 namespace Pruduct.Common.Entities;
 
 public class BaseEntity<TKey> : IBaseEntity<TKey>

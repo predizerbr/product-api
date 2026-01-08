@@ -25,10 +25,18 @@ public static class ServiceCollectionExtensions
         services.AddValidatorsFromAssembly(typeof(SignupRequestValidator).Assembly);
 
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+        services.Configure<EmailOptions>(configuration.GetSection(EmailOptions.SectionName));
+        services.Configure<GoogleAuthOptions>(
+            configuration.GetSection(GoogleAuthOptions.SectionName)
+        );
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IEmailSender, LoggingEmailSender>();
         services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IWalletService, WalletService>();
+        services.AddScoped<IPaymentMethodService, PaymentMethodService>();
         services.AddScoped<IDatabaseSeeder, DatabaseSeeder>();
 
         ProblemDetailsExtensions.AddProblemDetails(services);

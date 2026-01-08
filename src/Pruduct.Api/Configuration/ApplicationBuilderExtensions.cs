@@ -9,6 +9,7 @@ public static class ApplicationBuilderExtensions
 {
     public static WebApplication UseApiPipeline(this WebApplication app)
     {
+        app.UseMiddleware<Middlewares.CorrelationIdMiddleware>();
         app.UseSerilogRequestLogging();
         app.UseProblemDetails();
         app.UseCors("Allowlist");
