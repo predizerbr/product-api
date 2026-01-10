@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Wallet;
 
-namespace Pruduct.Data.Configurations;
+namespace Pruduct.Data.Configurations.Wallet;
 
 public class WithdrawalConfiguration : IEntityTypeConfiguration<Withdrawal>
 {

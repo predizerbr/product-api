@@ -1,7 +1,7 @@
-using Pruduct.Business.Abstractions.Results;
+using Pruduct.Business.Interfaces.Results;
 using Pruduct.Contracts.Payments;
 
-namespace Pruduct.Business.Abstractions;
+namespace Pruduct.Business.Interfaces.Payments;
 
 public interface IPaymentMethodService
 {

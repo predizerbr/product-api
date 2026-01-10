@@ -27,3 +27,6 @@ src/Pruduct.Api/appsettings.Development.json
 ## OS
 Thumbs.db
 .DS_Store
+
+# env files
+.env

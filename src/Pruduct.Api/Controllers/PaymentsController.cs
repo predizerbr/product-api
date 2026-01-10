@@ -1,9 +1,8 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Pruduct.Api.Contracts;
-using Pruduct.Business.Abstractions;
+using Pruduct.Business.Interfaces.Payments;
 using Pruduct.Contracts.Payments;
 
 namespace Pruduct.Api.Controllers;
@@ -88,9 +87,7 @@ public class PaymentsController : ControllerBase
 
     private bool TryGetUserId(out Guid userId)
     {
-        var sub =
-            User.FindFirstValue(JwtRegisteredClaimNames.Sub)
-            ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
         return Guid.TryParse(sub, out userId);
     }
 }

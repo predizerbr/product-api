@@ -1,41 +1,40 @@
-using Pruduct.Business.Abstractions.Results;
+using System.Security.Claims;
 using Pruduct.Contracts.Auth;
 
-namespace Pruduct.Business.Abstractions;
+namespace Pruduct.Business.Interfaces.Auth;
 
 public interface IAuthService
 {
-    Task<ServiceResult<AuthResponse>> SignupAsync(
-        SignupRequest request,
-        CancellationToken ct = default
+    Task SignUpAsync(SignupRequest request, CancellationToken ct);
+    Task SignInAsync(LoginRequest request, bool? useCookies, bool? useSessionCookies);
+    Task SignOutAsync();
+    Task RefreshAsync(RefreshRequest request);
+    Task ConfirmEmailAsync(Guid userId, string code, string? newEmail);
+    Task ResendConfirmationEmailAsync(ResendConfirmationEmailRequest request, CancellationToken ct);
+    Task ForgotPasswordAsync(ForgotPasswordRequest request, CancellationToken ct);
+    Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken ct);
+    Task ChangePasswordAsync(
+        ClaimsPrincipal principal,
+        ChangePasswordRequest request,
+        CancellationToken ct
     );
-    Task<ServiceResult<AuthResponse>> LoginAsync(
-        LoginRequest request,
-        CancellationToken ct = default
+    Task VerifyResetCodeAsync(VerifyResetCodeRequest request);
+    Task<InfoResponse> GetInfoAsync(ClaimsPrincipal principal);
+    Task<InfoResponse> UpdateInfoAsync(
+        ClaimsPrincipal principal,
+        InfoRequest request,
+        CancellationToken ct
     );
-    Task<ServiceResult<AuthResponse>> RefreshAsync(
-        RefreshRequest request,
-        CancellationToken ct = default
+    Task<TwoFactorResponse> GetTwoFactorAsync(ClaimsPrincipal principal);
+    Task<TwoFactorResponse> UpdateTwoFactorAsync(
+        ClaimsPrincipal principal,
+        TwoFactorRequest request
     );
-    Task<ServiceResult<AuthResponse>> LoginWithGoogleAsync(
+    Task GoogleLoginAsync(
         GoogleLoginRequest request,
-        CancellationToken ct = default
+        bool? useCookies = null,
+        bool? useSessionCookies = null
     );
-    Task<ServiceResult<bool>> LogoutAsync(
-        Guid userId,
-        LogoutRequest request,
-        CancellationToken ct = default
-    );
-    Task<ServiceResult<ForgotPasswordResponse>> ForgotPasswordAsync(
-        ForgotPasswordRequest request,
-        CancellationToken ct = default
-    );
-    Task<ServiceResult<bool>> ResetPasswordAsync(
-        ResetPasswordRequest request,
-        CancellationToken ct = default
-    );
-    Task<ServiceResult<bool>> VerifyEmailAsync(
-        VerifyEmailRequest request,
-        CancellationToken ct = default
-    );
+    Task<bool> HasExternalLoginAsync(ClaimsPrincipal principal, string? provider = null);
+    Task<IEnumerable<string>> GetExternalLoginProvidersAsync(ClaimsPrincipal principal);
 }

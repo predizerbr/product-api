@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Audit;
 
-namespace Pruduct.Data.Configurations;
+namespace Pruduct.Data.Configurations.Audit;
 
 public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
 {

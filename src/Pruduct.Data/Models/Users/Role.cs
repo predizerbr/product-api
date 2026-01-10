@@ -1,8 +1,5 @@
-using Pruduct.Common.Enums;
+using Microsoft.AspNetCore.Identity;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Users;
 
-public class Role
-{
-    public RoleName Name { get; set; }
-}
+public class Role : IdentityRole<Guid> { }

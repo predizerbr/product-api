@@ -1,6 +1,7 @@
 using Pruduct.Common.Entities;
+using Pruduct.Data.Models.Users;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Auth;
 
 public class EmailVerificationToken : Entity<Guid>
 {

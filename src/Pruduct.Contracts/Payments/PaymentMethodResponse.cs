@@ -1,5 +1,3 @@
-using System;
-
 namespace Pruduct.Contracts.Payments;
 
 public class PaymentMethodResponse

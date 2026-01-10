@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Payments;
 
-namespace Pruduct.Data.Configurations;
+namespace Pruduct.Data.Configurations.Payments;
 
 public class PaymentMethodConfiguration : IEntityTypeConfiguration<PaymentMethod>
 {

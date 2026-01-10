@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
-using Pruduct.Business.Abstractions;
-using Pruduct.Business.Abstractions.Results;
+using Pruduct.Business.Interfaces.Payments;
+using Pruduct.Business.Interfaces.Results;
 using Pruduct.Common.Enums;
 using Pruduct.Contracts.Payments;
 using Pruduct.Data.Database.Contexts;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Payments;
 
-namespace Pruduct.Business.Services;
+namespace Pruduct.Business.Services.Payments;
 
 public class PaymentMethodService : IPaymentMethodService
 {
@@ -22,15 +22,12 @@ public class PaymentMethodService : IPaymentMethodService
         CancellationToken ct = default
     )
     {
-        var methods = await _db.PaymentMethods
-            .Where(x => x.UserId == userId)
+        var methods = await _db
+            .PaymentMethods.Where(x => x.UserId == userId)
             .OrderByDescending(x => x.CreatedAt)
             .ToListAsync(ct);
 
-        var response = new PaymentMethodListResponse
-        {
-            Items = methods.Select(Map).ToList(),
-        };
+        var response = new PaymentMethodListResponse { Items = methods.Select(Map).ToList() };
 
         return ServiceResult<PaymentMethodListResponse>.Ok(response);
     }
@@ -81,8 +78,8 @@ public class PaymentMethodService : IPaymentMethodService
         var isDefault = request.IsDefault ?? !hasMethods;
         if (isDefault)
         {
-            var existingDefaults = await _db.PaymentMethods
-                .Where(x => x.UserId == userId && x.IsDefault)
+            var existingDefaults = await _db
+                .PaymentMethods.Where(x => x.UserId == userId && x.IsDefault)
                 .ToListAsync(ct);
 
             foreach (var existing in existingDefaults)

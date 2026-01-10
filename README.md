@@ -1,6 +1,6 @@
 # PredictX back
 
-API em .NET 8 para o back-end do PredictX. Inclui autenticacao JWT, EF Core com PostgreSQL e Swagger para exploracao dos endpoints.
+API em .NET 8 para o back-end do PredictX. Inclui autenticacao com ASP.NET Core Identity (cookies e bearer tokens), EF Core com PostgreSQL e Swagger para exploracao dos endpoints.
 
 ## Requisitos
 
@@ -11,8 +11,9 @@ API em .NET 8 para o back-end do PredictX. Inclui autenticacao JWT, EF Core com 
 ## Configuracao rapida
 
 1. Crie/ajuste a string de conexao em `src/Pruduct.Api/appsettings.Development.json` (chave `ConnectionStrings:DefaultConnection`) ou defina a variavel de ambiente `ConnectionStrings__DefaultConnection`.
-2. Altere a chave `Jwt:Key` para um valor seguro (32+ chars) via variavel de ambiente `Jwt__Key` ou editando o arquivo.
-3. Opcional: ajuste a lista `Cors:Allow` para os dominios do seu front.
+2. Ajuste `Frontend:BaseUrl` e as expiracoes em `IdentityTokens`.
+3. Configure SMTP em `EmailSettings` e remetente em `Email`.
+4. Opcional: ajuste a lista `Cors:Allow` para os dominios do seu front.
 
 ## Restaurar, migrar e rodar
 

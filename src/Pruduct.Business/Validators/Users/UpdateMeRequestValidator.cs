@@ -1,7 +1,7 @@
 using FluentValidation;
 using Pruduct.Contracts.Users;
 
-namespace Pruduct.Business.Validators;
+namespace Pruduct.Business.Validators.Users;
 
 public class UpdateProfileRequestValidator : AbstractValidator<UpdateProfileRequest>
 {
@@ -9,10 +9,7 @@ public class UpdateProfileRequestValidator : AbstractValidator<UpdateProfileRequ
     {
         When(x => x.Name is not null, () => RuleFor(x => x.Name).NotEmpty());
         When(x => x.Username is not null, () => RuleFor(x => x.Username).NotEmpty());
-        When(
-            x => x.Email is not null,
-            () => RuleFor(x => x.Email).NotEmpty().EmailAddress()
-        );
+        When(x => x.Email is not null, () => RuleFor(x => x.Email).NotEmpty().EmailAddress());
 
         When(
             x => !string.IsNullOrWhiteSpace(x.Password),

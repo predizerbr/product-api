@@ -1,7 +1,7 @@
 using Pruduct.Common.Entities;
 using Pruduct.Common.Enums;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Wallet;
 
 public class LedgerEntry : Entity<Guid>
 {

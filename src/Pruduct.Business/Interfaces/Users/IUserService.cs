@@ -1,7 +1,7 @@
-﻿using Pruduct.Business.Abstractions.Results;
+﻿using Pruduct.Business.Interfaces.Results;
 using Pruduct.Contracts.Users;
 
-namespace Pruduct.Business.Abstractions;
+namespace Pruduct.Business.Interfaces.Users;
 
 public interface IUserService
 {
@@ -31,4 +31,3 @@ public interface IUserService
         CancellationToken ct = default
     );
 }
-

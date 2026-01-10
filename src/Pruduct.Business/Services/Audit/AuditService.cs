@@ -1,9 +1,9 @@
 using System.Text.Json;
-using Pruduct.Business.Abstractions;
+using Pruduct.Business.Interfaces.Audit;
 using Pruduct.Data.Database.Contexts;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Audit;
 
-namespace Pruduct.Business.Services;
+namespace Pruduct.Business.Services.Audit;
 
 public class AuditService : IAuditService
 {
@@ -27,16 +27,18 @@ public class AuditService : IAuditService
     {
         var metaJson = meta is null ? null : JsonSerializer.Serialize(meta);
 
-        _db.AuditLogs.Add(new AuditLog
-        {
-            UserId = userId,
-            Action = action,
-            Entity = entity,
-            EntityId = entityId,
-            MetaJson = metaJson,
-            Ip = ip,
-            UserAgent = userAgent,
-        });
+        _db.AuditLogs.Add(
+            new AuditLog
+            {
+                UserId = userId,
+                Action = action,
+                Entity = entity,
+                EntityId = entityId,
+                MetaJson = metaJson,
+                Ip = ip,
+                UserAgent = userAgent,
+            }
+        );
 
         await _db.SaveChangesAsync(ct);
     }

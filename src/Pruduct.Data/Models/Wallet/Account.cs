@@ -1,6 +1,7 @@
 using Pruduct.Common.Entities;
+using Pruduct.Data.Models.Users;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Wallet;
 
 public class Account : Entity<Guid>
 {

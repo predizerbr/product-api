@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Payments;
+using Pruduct.Data.Models.Wallet;
 
 namespace Pruduct.Data.Database.Contexts;
 

@@ -1,6 +1,6 @@
 using Pruduct.Common.Entities;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Users;
 
 public class UserAddress : Entity<Guid>
 {

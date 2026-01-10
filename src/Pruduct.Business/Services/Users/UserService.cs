@@ -1,11 +1,14 @@
-﻿using Microsoft.EntityFrameworkCore;
-using Pruduct.Business.Abstractions;
-using Pruduct.Business.Abstractions.Results;
+﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Pruduct.Business.Interfaces.Audit;
+using Pruduct.Business.Interfaces.Auth;
+using Pruduct.Business.Interfaces.Results;
+using Pruduct.Business.Interfaces.Users;
 using Pruduct.Contracts.Users;
 using Pruduct.Data.Database.Contexts;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Users;
 
-namespace Pruduct.Business.Services;
+namespace Pruduct.Business.Services.Users;
 
 public class UserService : IUserService
 {
@@ -73,7 +76,7 @@ public class UserService : IUserService
         {
             var normalizedUsername = NormalizeUsername(request.Username);
             var usernameTaken = await _db.Users.AnyAsync(
-                u => u.Id != userId && u.NormalizedUsername == normalizedUsername,
+                u => u.Id != userId && u.NormalizedUserName == normalizedUsername,
                 ct
             );
             if (usernameTaken)
@@ -81,8 +84,8 @@ public class UserService : IUserService
                 return ServiceResult<UserView>.Fail("username_taken");
             }
 
-            user.Username = normalizedUsername;
-            user.NormalizedUsername = normalizedUsername;
+            user.UserName = normalizedUsername;
+            user.NormalizedUserName = normalizedUsername;
         }
 
         if (request.Name is not null)
@@ -94,6 +97,7 @@ public class UserService : IUserService
         if (!string.IsNullOrWhiteSpace(request.Password))
         {
             user.PasswordHash = _passwordHasher.Hash(request.Password);
+            user.SecurityStamp = Guid.NewGuid().ToString();
         }
 
         try
@@ -140,10 +144,35 @@ public class UserService : IUserService
 
         if (user.PersonalData is null)
         {
-            return ServiceResult<UserView>.Fail("personal_data_required");
-        }
+            if (
+                string.IsNullOrWhiteSpace(request.ZipCode)
+                || string.IsNullOrWhiteSpace(request.Street)
+                || string.IsNullOrWhiteSpace(request.City)
+                || string.IsNullOrWhiteSpace(request.State)
+            )
+            {
+                return ServiceResult<UserView>.Fail("address_required");
+            }
 
-        if (user.PersonalData.Address is null)
+            user.PersonalData = new UserPersonalData
+            {
+                UserId = user.Id,
+                Cpf = null,
+                PhoneNumber = null,
+                Address = new UserAddress
+                {
+                    ZipCode = request.ZipCode!,
+                    Street = request.Street!,
+                    Neighborhood = request.Neighborhood,
+                    Number = request.Number,
+                    Complement = request.Complement,
+                    City = request.City!,
+                    State = request.State!,
+                    Country = string.IsNullOrWhiteSpace(request.Country) ? "BR" : request.Country!,
+                },
+            };
+        }
+        else if (user.PersonalData.Address is null)
         {
             if (
                 string.IsNullOrWhiteSpace(request.ZipCode)
@@ -309,24 +338,22 @@ public class UserService : IUserService
 
         if (user.PersonalData is null)
         {
-            if (string.IsNullOrWhiteSpace(request.Cpf))
+            if (!string.IsNullOrWhiteSpace(request.Cpf))
             {
-                throw new InvalidOperationException("personal_data_required");
-            }
-
-            var cpfTaken = await _db.UserPersonalData.AnyAsync(
-                x => x.UserId != user.Id && x.Cpf == request.Cpf,
-                ct
-            );
-            if (cpfTaken)
-            {
-                throw new InvalidOperationException("cpf_taken");
+                var cpfTaken = await _db.UserPersonalData.AnyAsync(
+                    x => x.UserId != user.Id && x.Cpf == request.Cpf,
+                    ct
+                );
+                if (cpfTaken)
+                {
+                    throw new InvalidOperationException("cpf_taken");
+                }
             }
 
             user.PersonalData = new UserPersonalData
             {
                 UserId = user.Id,
-                Cpf = request.Cpf!,
+                Cpf = string.IsNullOrWhiteSpace(request.Cpf) ? null : request.Cpf,
                 PhoneNumber = string.IsNullOrWhiteSpace(request.PhoneNumber)
                     ? null
                     : request.PhoneNumber,
@@ -361,7 +388,7 @@ public class UserService : IUserService
     {
         var roles = await _db
             .UserRoles.Where(ur => ur.UserId == user.Id)
-            .Join(_db.Roles, ur => ur.RoleName, r => r.Name, (ur, r) => r.Name.ToString())
+            .Join(_db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => r.Name ?? string.Empty)
             .ToArrayAsync(ct);
 
         var personal = user.PersonalData;
@@ -390,8 +417,8 @@ public class UserService : IUserService
         return new UserView
         {
             Id = user.Id,
-            Email = user.Email,
-            Username = user.Username,
+            Email = user.Email ?? string.Empty,
+            Username = user.UserName ?? string.Empty,
             Name = user.Name,
             AvatarUrl = user.AvatarUrl,
             Roles = roles,
@@ -434,4 +461,3 @@ public class UserService : IUserService
         return new string(buffer[..idx]).Normalize(System.Text.NormalizationForm.FormC);
     }
 }
-

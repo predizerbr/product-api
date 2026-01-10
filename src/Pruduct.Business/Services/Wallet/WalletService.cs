@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
-using Pruduct.Business.Abstractions;
-using Pruduct.Business.Abstractions.Results;
+using Pruduct.Business.Interfaces.Results;
+using Pruduct.Business.Interfaces.Wallet;
 using Pruduct.Common.Enums;
 using Pruduct.Contracts.Wallet;
 using Pruduct.Data.Database.Contexts;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Wallet;
 
-namespace Pruduct.Business.Services;
+namespace Pruduct.Business.Services.Wallet;
 
 public class WalletService : IWalletService
 {
@@ -19,6 +19,45 @@ public class WalletService : IWalletService
     public WalletService(AppDbContext db)
     {
         _db = db;
+    }
+
+    public async Task<ServiceResult<bool>> ConfirmDepositAsync(
+        Guid paymentIntentId,
+        string providerPaymentId,
+        CancellationToken ct = default
+    )
+    {
+        var intent = await _db.PaymentIntents.FindAsync(new object?[] { paymentIntentId }, ct);
+        if (intent is null)
+            return ServiceResult<bool>.Fail("payment_intent_not_found");
+
+        if (intent.Status == PaymentIntentStatus.APPROVED)
+        {
+            return ServiceResult<bool>.Ok(true); // idempotent
+        }
+
+        // marca como aprovado e cria ledger entry
+        var accounts = await EnsureAccountsAsync(intent.UserId, ct);
+        var account = accounts[0];
+
+        _db.LedgerEntries.Add(
+            new LedgerEntry
+            {
+                AccountId = account.Id,
+                Type = LedgerEntryType.DEPOSIT_GATEWAY,
+                Amount = intent.Amount,
+                ReferenceType = "PaymentIntent",
+                ReferenceId = intent.Id,
+                IdempotencyKey = providerPaymentId ?? intent.IdempotencyKey,
+            }
+        );
+
+        intent.Status = PaymentIntentStatus.APPROVED;
+        intent.ExternalPaymentId ??= providerPaymentId;
+
+        await _db.SaveChangesAsync(ct);
+
+        return ServiceResult<bool>.Ok(true);
     }
 
     public async Task<ServiceResult<IReadOnlyCollection<WalletBalanceResponse>>> GetBalancesAsync(
@@ -177,8 +216,7 @@ public class WalletService : IWalletService
         var page = intents.Take(pageSize).ToList();
         var nextCursor = hasMore && page.Count > 0 ? page.Last().CreatedAt.ToString("o") : null;
 
-        var items = page
-            .Select(x => new DepositListItem
+        var items = page.Select(x => new DepositListItem
             {
                 PaymentIntentId = x.Id,
                 Provider = x.Provider,
@@ -213,8 +251,8 @@ public class WalletService : IWalletService
             return ServiceResult<WithdrawalResponse>.Ok(MapWithdrawal(existing));
         }
 
-        var balance = await _db.LedgerEntries
-            .Where(le => le.AccountId == account.Id)
+        var balance = await _db
+            .LedgerEntries.Where(le => le.AccountId == account.Id)
             .SumAsync(le => le.Amount, ct);
 
         if (balance < request.Amount)
@@ -234,15 +272,17 @@ public class WalletService : IWalletService
         _db.Withdrawals.Add(withdrawal);
         await _db.SaveChangesAsync(ct);
 
-        _db.LedgerEntries.Add(new LedgerEntry
-        {
-            AccountId = account.Id,
-            Type = LedgerEntryType.WITHDRAW_REQUEST,
-            Amount = -request.Amount,
-            ReferenceType = "Withdrawal",
-            ReferenceId = withdrawal.Id,
-            IdempotencyKey = idempotencyKey,
-        });
+        _db.LedgerEntries.Add(
+            new LedgerEntry
+            {
+                AccountId = account.Id,
+                Type = LedgerEntryType.WITHDRAW_REQUEST,
+                Amount = -request.Amount,
+                ReferenceType = "Withdrawal",
+                ReferenceId = withdrawal.Id,
+                IdempotencyKey = idempotencyKey,
+            }
+        );
 
         await _db.SaveChangesAsync(ct);
 
@@ -278,9 +318,7 @@ public class WalletService : IWalletService
         var page = withdrawals.Take(pageSize).ToList();
         var nextCursor = hasMore && page.Count > 0 ? page.Last().CreatedAt.ToString("o") : null;
 
-        var items = page
-            .Select(MapWithdrawalListItem)
-            .ToList();
+        var items = page.Select(MapWithdrawalListItem).ToList();
 
         return ServiceResult<WithdrawalListResponse>.Ok(
             new WithdrawalListResponse { Items = items, NextCursor = nextCursor }
@@ -347,15 +385,17 @@ public class WalletService : IWalletService
             return ServiceResult<WithdrawalResponse>.Fail("account_not_found");
         }
 
-        _db.LedgerEntries.Add(new LedgerEntry
-        {
-            AccountId = account.Id,
-            Type = LedgerEntryType.WITHDRAW_REQUEST,
-            Amount = withdrawal.Amount,
-            ReferenceType = "Withdrawal",
-            ReferenceId = withdrawal.Id,
-            IdempotencyKey = $"withdraw-reject-{withdrawal.Id}",
-        });
+        _db.LedgerEntries.Add(
+            new LedgerEntry
+            {
+                AccountId = account.Id,
+                Type = LedgerEntryType.WITHDRAW_REQUEST,
+                Amount = withdrawal.Amount,
+                ReferenceType = "Withdrawal",
+                ReferenceId = withdrawal.Id,
+                IdempotencyKey = $"withdraw-reject-{withdrawal.Id}",
+            }
+        );
 
         await _db.SaveChangesAsync(ct);
 

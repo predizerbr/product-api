@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-
 namespace Pruduct.Contracts.Payments;
 
 public class PaymentMethodListResponse

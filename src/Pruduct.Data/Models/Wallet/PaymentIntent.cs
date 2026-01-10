@@ -1,12 +1,13 @@
 using Pruduct.Common.Entities;
 using Pruduct.Common.Enums;
+using Pruduct.Data.Models.Users;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Wallet;
 
 public class PaymentIntent : Entity<Guid>
 {
     public Guid UserId { get; set; }
-    public string Provider { get; set; } = "MANUAL";
+    public string Provider { get; set; } = null!;
     public long Amount { get; set; }
     public string Currency { get; set; } = "BRL";
     public PaymentIntentStatus Status { get; set; } = PaymentIntentStatus.PENDING;

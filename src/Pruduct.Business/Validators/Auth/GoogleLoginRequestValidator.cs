@@ -1,7 +1,7 @@
 using FluentValidation;
 using Pruduct.Contracts.Auth;
 
-namespace Pruduct.Business.Validators;
+namespace Pruduct.Business.Validators.Auth;
 
 public class GoogleLoginRequestValidator : AbstractValidator<GoogleLoginRequest>
 {

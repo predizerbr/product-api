@@ -1,11 +1,11 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.OpenApi.Models;
 
 namespace Pruduct.Api.Configuration;
 
 public static class SwaggerConfigurationExtensions
 {
-    public static IServiceCollection AddSwaggerWithJwt(this IServiceCollection services)
+    public static IServiceCollection AddSwaggerWithBearer(this IServiceCollection services)
     {
         services.AddEndpointsApiExplorer();
 
@@ -16,19 +16,19 @@ public static class SwaggerConfigurationExtensions
             var securityScheme = new OpenApiSecurityScheme
             {
                 Name = "Authorization",
-                Description = "Insira o token JWT no formato: Bearer {token}",
+                Description = "Insira o bearer token no formato: Bearer {token}",
                 In = ParameterLocation.Header,
                 Type = SecuritySchemeType.Http,
-                Scheme = JwtBearerDefaults.AuthenticationScheme,
-                BearerFormat = "JWT",
+                Scheme = BearerTokenDefaults.AuthenticationScheme,
+                BearerFormat = "Opaque",
                 Reference = new OpenApiReference
                 {
                     Type = ReferenceType.SecurityScheme,
-                    Id = JwtBearerDefaults.AuthenticationScheme,
+                    Id = BearerTokenDefaults.AuthenticationScheme,
                 },
             };
 
-            c.AddSecurityDefinition(JwtBearerDefaults.AuthenticationScheme, securityScheme);
+            c.AddSecurityDefinition(BearerTokenDefaults.AuthenticationScheme, securityScheme);
             c.AddSecurityRequirement(
                 new OpenApiSecurityRequirement { { securityScheme, new List<string>() } }
             );

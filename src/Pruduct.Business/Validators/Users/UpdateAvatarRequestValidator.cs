@@ -1,7 +1,7 @@
 using FluentValidation;
 using Pruduct.Contracts.Users;
 
-namespace Pruduct.Business.Validators;
+namespace Pruduct.Business.Validators.Users;
 
 public class UpdateAvatarRequestValidator : AbstractValidator<UpdateAvatarRequest>
 {

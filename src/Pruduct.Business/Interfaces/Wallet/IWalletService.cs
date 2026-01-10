@@ -1,7 +1,7 @@
-using Pruduct.Business.Abstractions.Results;
+using Pruduct.Business.Interfaces.Results;
 using Pruduct.Contracts.Wallet;
 
-namespace Pruduct.Business.Abstractions;
+namespace Pruduct.Business.Interfaces.Wallet;
 
 public interface IWalletService
 {
@@ -56,6 +56,12 @@ public interface IWalletService
         Guid withdrawalId,
         Guid adminUserId,
         WithdrawalDecisionRequest request,
+        CancellationToken ct = default
+    );
+
+    Task<ServiceResult<bool>> ConfirmDepositAsync(
+        Guid paymentIntentId,
+        string providerPaymentId,
         CancellationToken ct = default
     );
 }

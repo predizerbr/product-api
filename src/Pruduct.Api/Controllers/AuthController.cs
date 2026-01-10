@@ -1,9 +1,6 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Pruduct.Api.Contracts;
-using Pruduct.Business.Abstractions;
+using Pruduct.Business.Interfaces.Auth;
 using Pruduct.Contracts.Auth;
 
 namespace Pruduct.Api.Controllers;
@@ -13,167 +10,239 @@ namespace Pruduct.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
-    private readonly IWebHostEnvironment _environment;
 
-    public AuthController(IAuthService authService, IWebHostEnvironment environment)
+    public AuthController(IAuthService authService) => _authService = authService;
+
+    [HttpPost("sign-up")]
+    [AllowAnonymous]
+    public async Task<IActionResult> SignUp(
+        [FromBody] SignupRequest request,
+        CancellationToken cancellationToken = default
+    )
     {
-        _authService = authService;
-        _environment = environment;
+        await _authService.SignUpAsync(request, cancellationToken);
+        return NoContent();
     }
 
-    [HttpPost("signup")]
+    [HttpPost("sign-in")]
     [AllowAnonymous]
-    public async Task<IActionResult> Signup([FromBody] SignupRequest request, CancellationToken ct)
+    public async Task<IActionResult> SignIn(
+        [FromBody] LoginRequest request,
+        [FromQuery] bool? useCookies,
+        [FromQuery] bool? useSessionCookies
+    )
     {
-        var result = await _authService.SignupAsync(request, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<AuthResponse>(result.Data!));
+        await _authService.SignInAsync(request, useCookies, useSessionCookies);
+        return Ok();
     }
 
-    [HttpPost("login")]
-    [AllowAnonymous]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
+    [HttpPost("sign-out")]
+    [Authorize]
+    public async Task<IActionResult> SignOutUser()
     {
-        var result = await _authService.LoginAsync(request, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<AuthResponse>(result.Data!));
+        await _authService.SignOutAsync();
+        return NoContent();
     }
 
     [HttpPost("refresh")]
     [AllowAnonymous]
-    public async Task<IActionResult> Refresh(
-        [FromBody] RefreshRequest request,
-        CancellationToken ct
-    )
+    public async Task<IActionResult> Refresh([FromBody] RefreshRequest request)
     {
-        var result = await _authService.RefreshAsync(request, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<AuthResponse>(result.Data!));
+        await _authService.RefreshAsync(request);
+        return Ok();
     }
 
-    [HttpPost("login/google")]
+    [HttpPost("confirmEmail")]
     [AllowAnonymous]
-    public async Task<IActionResult> LoginWithGoogle(
-        [FromBody] GoogleLoginRequest request,
+    public async Task<IActionResult> ConfirmEmail(
+        [FromQuery] Guid userId,
+        [FromQuery] string code,
+        [FromQuery] string? newEmail
+    )
+    {
+        await _authService.ConfirmEmailAsync(userId, code, newEmail);
+        return Ok();
+    }
+
+    [HttpPost("resendConfirmationEmail")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Resend(
+        [FromBody] ResendConfirmationEmailRequest request,
         CancellationToken ct
     )
     {
-        var result = await _authService.LoginWithGoogleAsync(request, ct);
-        if (!result.Success)
-        {
-            var status = result.Error switch
-            {
-                "google_not_configured" => StatusCodes.Status501NotImplemented,
-                "user_inactive" => StatusCodes.Status403Forbidden,
-                _ => StatusCodes.Status401Unauthorized,
-            };
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<AuthResponse>(result.Data!));
+        await _authService.ResendConfirmationEmailAsync(request, ct);
+        return Ok();
     }
 
-    [HttpPost("logout")]
-    [Authorize]
-    public async Task<IActionResult> Logout([FromBody] LogoutRequest request, CancellationToken ct)
+    [HttpPost("resend-reset-code")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ResendResetCode(
+        [FromBody] ForgotPasswordRequest request,
+        CancellationToken ct
+    )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _authService.LogoutAsync(userId, request, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<bool>(true));
+        // Reuse forgot-password flow to resend the password reset code.
+        await _authService.ForgotPasswordAsync(request, ct);
+        return Ok();
     }
 
-    [HttpPost("forgot-password")]
+    [HttpPost("sign-in/google")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GoogleSignIn(
+        [FromBody] GoogleLoginRequest request,
+        [FromQuery] bool? useCookies,
+        [FromQuery] bool? useSessionCookies
+    )
+    {
+        try
+        {
+            await _authService.GoogleLoginAsync(request, useCookies, useSessionCookies);
+            return Ok();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Problem(
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "invalid_google_token"
+            );
+        }
+    }
+
+    [HttpPost("forgotPassword")]
     [AllowAnonymous]
     public async Task<IActionResult> ForgotPassword(
         [FromBody] ForgotPasswordRequest request,
         CancellationToken ct
     )
     {
-        var result = await _authService.ForgotPasswordAsync(request, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: result.Error);
-        }
-
-        var response = result.Data!;
-        if (!_environment.IsDevelopment())
-        {
-            response = new ForgotPasswordResponse { ResetToken = null, ExpiresAt = null };
-        }
-
-        return Ok(new ResponseEnvelope<ForgotPasswordResponse>(response));
+        await _authService.ForgotPasswordAsync(request, ct);
+        return Ok();
     }
 
-    [HttpPost("reset-password")]
+    [HttpPost("resetPassword")]
     [AllowAnonymous]
     public async Task<IActionResult> ResetPassword(
         [FromBody] ResetPasswordRequest request,
         CancellationToken ct
     )
     {
-        var result = await _authService.ResetPasswordAsync(request, ct);
-        if (!result.Success)
-        {
-            var status = result.Error switch
-            {
-                "invalid_reset_token" => StatusCodes.Status400BadRequest,
-                "user_not_found" => StatusCodes.Status404NotFound,
-                _ => StatusCodes.Status400BadRequest,
-            };
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<bool>(true));
+        await _authService.ResetPasswordAsync(request, ct);
+        return Ok();
     }
 
-    [HttpPost("verify-email")]
+    [HttpPost("verify-reset-code")]
     [AllowAnonymous]
-    public async Task<IActionResult> VerifyEmail(
-        [FromBody] VerifyEmailRequest request,
+    public async Task<IActionResult> VerifyResetCode([FromBody] VerifyResetCodeRequest request)
+    {
+        try
+        {
+            await _authService.VerifyResetCodeAsync(request);
+            return Ok();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { title = "user_not_found" });
+        }
+        catch (ArgumentException ex) when (ex.Message == "invalid_reset_token")
+        {
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "invalid_reset_token"
+            );
+        }
+        catch (ArgumentException ex)
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
+        }
+    }
+
+    [HttpGet("manage/info")]
+    [Authorize]
+    public async Task<IActionResult> GetInfo()
+    {
+        var info = await _authService.GetInfoAsync(User);
+        return Ok(info);
+    }
+
+    [HttpPost("manage/info")]
+    [Authorize]
+    public async Task<IActionResult> UpdateInfo(
+        [FromBody] InfoRequest request,
         CancellationToken ct
     )
     {
-        var result = await _authService.VerifyEmailAsync(request, ct);
-        if (!result.Success)
+        try
         {
-            var status = result.Error switch
-            {
-                "invalid_verify_token" => StatusCodes.Status400BadRequest,
-                "user_not_found" => StatusCodes.Status404NotFound,
-                _ => StatusCodes.Status400BadRequest,
-            };
-            return Problem(statusCode: status, title: result.Error);
+            var info = await _authService.UpdateInfoAsync(User, request, ct);
+            return Ok(info);
         }
-
-        return Ok(new ResponseEnvelope<bool>(true));
+        catch (InvalidOperationException ex)
+            when (ex.Message == "external_account_cannot_change_password")
+        {
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "external_account_cannot_change_password"
+            );
+        }
     }
 
-    private bool TryGetUserId(out Guid userId)
+    [HttpGet("manage/2fa")]
+    [Authorize]
+    public async Task<IActionResult> GetTwoFactor()
     {
-        var sub =
-            User.FindFirstValue(JwtRegisteredClaimNames.Sub)
-            ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return Guid.TryParse(sub, out userId);
+        var resp = await _authService.GetTwoFactorAsync(User);
+        return Ok(resp);
+    }
+
+    [HttpPost("manage/2fa")]
+    [Authorize]
+    public async Task<IActionResult> UpdateTwoFactor([FromBody] TwoFactorRequest request)
+    {
+        var resp = await _authService.UpdateTwoFactorAsync(User, request);
+        return Ok(resp);
+    }
+
+    [HttpGet("manage/external-login")]
+    [Authorize]
+    public async Task<IActionResult> HasExternalLogin()
+    {
+        var providers = await _authService.GetExternalLoginProvidersAsync(User);
+        var has = providers != null && providers.Any();
+        return Ok(new { hasExternalLogin = has, providers });
+    }
+
+    [HttpPost("manage/password")]
+    [Authorize]
+    public async Task<IActionResult> ChangePassword(
+        [FromBody] ChangePasswordRequest request,
+        CancellationToken ct
+    )
+    {
+        try
+        {
+            await _authService.ChangePasswordAsync(User, request, ct);
+            return Ok();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
+        }
+        catch (ArgumentException ex) when (ex.Message == "password_mismatch")
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "password_mismatch");
+        }
+        catch (InvalidOperationException ex)
+            when (ex.Message == "external_account_cannot_change_password")
+        {
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "external_account_cannot_change_password"
+            );
+        }
+        catch (ArgumentException ex)
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
+        }
     }
 }

@@ -1,16 +1,14 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Pruduct.Data.Models;
 
-namespace Pruduct.Data.Configurations;
+namespace Pruduct.Data.Configurations.Users;
 
-public class UserRoleConfiguration : IEntityTypeConfiguration<UserRole>
+public class UserRoleConfiguration : IEntityTypeConfiguration<IdentityUserRole<Guid>>
 {
-    public void Configure(EntityTypeBuilder<UserRole> builder)
+    public void Configure(EntityTypeBuilder<IdentityUserRole<Guid>> builder)
     {
-        builder.HasKey(x => new { x.UserId, x.RoleName });
-        builder.Property(x => x.RoleName).HasConversion<string>().IsRequired();
-        builder.HasOne<User>().WithMany().HasForeignKey(x => x.UserId);
-        builder.HasOne<Role>().WithMany().HasForeignKey(x => x.RoleName);
+        builder.ToTable("AspNetUserRoles");
+        builder.HasIndex(x => x.RoleId);
     }
 }

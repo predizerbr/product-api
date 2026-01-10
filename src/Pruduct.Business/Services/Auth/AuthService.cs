@@ -1,520 +1,612 @@
-﻿using System.Globalization;
+using System.Globalization;
+using System.Linq;
+using System.Security.Claims;
 using System.Text;
 using Google.Apis.Auth;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
-using Pruduct.Business.Abstractions;
-using Pruduct.Business.Abstractions.Results;
+using Microsoft.Extensions.Options;
+using Pruduct.Business.Interfaces.Auth;
 using Pruduct.Business.Options;
 using Pruduct.Common.Enums;
 using Pruduct.Contracts.Auth;
 using Pruduct.Data.Database.Contexts;
-using Pruduct.Data.Models;
-using Pruduct.Contracts.Users;
+using Pruduct.Data.Models.Users;
 
-namespace Pruduct.Business.Services;
+namespace Pruduct.Business.Services.Auth;
 
 public class AuthService : IAuthService
 {
-    private static readonly TimeSpan PasswordResetTtl = TimeSpan.FromHours(1);
-    private static readonly TimeSpan EmailVerificationTtl = TimeSpan.FromDays(2);
-
+    private readonly UserManager<User> _userManager;
+    private readonly RoleManager<Role> _roleManager;
+    private readonly SignInManager<User> _signInManager;
     private readonly AppDbContext _db;
-    private readonly IPasswordHasher _passwordHasher;
-    private readonly ITokenService _tokenService;
-    private readonly IAuditService _auditService;
     private readonly IEmailSender _emailSender;
-    private readonly JwtOptions _jwtOptions;
-    private readonly GoogleAuthOptions _googleOptions;
+    private readonly IOptions<FrontendOptions> _frontendOptions;
+    private readonly IOptionsMonitor<Microsoft.AspNetCore.Authentication.BearerToken.BearerTokenOptions> _bearerOptions;
+    private readonly IOptions<Pruduct.Business.Options.GoogleAuthOptions> _googleOptions;
 
     public AuthService(
+        UserManager<User> userManager,
+        RoleManager<Role> roleManager,
+        SignInManager<User> signInManager,
         AppDbContext db,
-        IPasswordHasher passwordHasher,
-        ITokenService tokenService,
-        IAuditService auditService,
         IEmailSender emailSender,
-        Microsoft.Extensions.Options.IOptions<JwtOptions> jwtOptions,
-        Microsoft.Extensions.Options.IOptions<GoogleAuthOptions> googleOptions
+        IOptions<FrontendOptions> frontendOptions,
+        IOptionsMonitor<Microsoft.AspNetCore.Authentication.BearerToken.BearerTokenOptions> bearerOptions,
+        IOptions<Pruduct.Business.Options.GoogleAuthOptions> googleOptions
     )
     {
+        _userManager = userManager;
+        _roleManager = roleManager;
+        _signInManager = signInManager;
         _db = db;
-        _passwordHasher = passwordHasher;
-        _tokenService = tokenService;
-        _auditService = auditService;
         _emailSender = emailSender;
-        _jwtOptions = jwtOptions.Value;
-        _googleOptions = googleOptions.Value;
+        _frontendOptions = frontendOptions;
+        _bearerOptions = bearerOptions;
+        _googleOptions = googleOptions;
     }
 
-    public async Task<ServiceResult<AuthResponse>> SignupAsync(
-        SignupRequest request,
-        CancellationToken ct = default
+    public async Task<bool> HasExternalLoginAsync(
+        ClaimsPrincipal principal,
+        string? provider = null
     )
     {
-        var normalizedEmail = NormalizeEmail(request.Email);
-
-        var emailExists = await _db.Users.AnyAsync(u => u.Email == normalizedEmail, ct);
-        if (emailExists)
-        {
-            return ServiceResult<AuthResponse>.Fail("email_already_registered");
-        }
-
-        var username = ExtractUsernameFromEmail(normalizedEmail);
-        var normalizedName = NormalizeName(request.Name);
-
-        var user = new User
-        {
-            Email = normalizedEmail,
-            NormalizedEmail = normalizedEmail,
-            Username = username,
-            NormalizedUsername = username,
-            Name = request.Name,
-            NormalizedName = normalizedName,
-            PasswordHash = _passwordHasher.Hash(request.Password),
-            Status = "ACTIVE",
-            PersonalData = null,
-        };
-
-        var userRole = await EnsureRoleAsync(RoleName.USER, ct);
-
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        _db.Users.Add(user);
-        await _db.SaveChangesAsync(ct);
-
-        _db.UserRoles.Add(new UserRole { UserId = user.Id, RoleName = userRole.Name });
-        await _db.SaveChangesAsync(ct);
-
-        var verifyToken = await CreateEmailVerificationTokenAsync(user, ct);
-        var tokens = await IssueTokensAsync(user, ct);
-
-        await tx.CommitAsync(ct);
-
-        await _auditService.LogAsync(user.Id, "AUTH_SIGNUP", "User", user.Id, ct: ct);
-        await _emailSender.SendEmailVerificationAsync(user.Email, verifyToken, ct);
-
-        return ServiceResult<AuthResponse>.Ok(tokens);
-    }
-
-    public async Task<ServiceResult<AuthResponse>> LoginAsync(
-        LoginRequest request,
-        CancellationToken ct = default
-    )
-    {
-        var normalizedEmail = NormalizeEmail(request.Email);
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+        var user = await _userManager.GetUserAsync(principal);
         if (user is null)
-        {
-            return ServiceResult<AuthResponse>.Fail("invalid_credentials");
-        }
+            throw new UnauthorizedAccessException("invalid_token");
 
-        var validPassword = _passwordHasher.Verify(user.PasswordHash, request.Password);
-        if (!validPassword)
-        {
-            return ServiceResult<AuthResponse>.Fail("invalid_credentials");
-        }
+        var logins = await _userManager.GetLoginsAsync(user);
+        if (logins is null || logins.Count == 0)
+            return false;
 
-        if (!string.Equals(user.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-        {
-            return ServiceResult<AuthResponse>.Fail("user_inactive");
-        }
+        if (string.IsNullOrWhiteSpace(provider))
+            return logins.Count > 0;
 
-        var tokens = await IssueTokensAsync(user, ct);
-
-        await _auditService.LogAsync(user.Id, "AUTH_LOGIN", "User", user.Id, ct: ct);
-
-        return ServiceResult<AuthResponse>.Ok(tokens);
+        return logins.Any(l =>
+            string.Equals(l.LoginProvider, provider, StringComparison.OrdinalIgnoreCase)
+        );
     }
 
-    public async Task<ServiceResult<AuthResponse>> RefreshAsync(
-        RefreshRequest request,
-        CancellationToken ct = default
-    )
+    public async Task<IEnumerable<string>> GetExternalLoginProvidersAsync(ClaimsPrincipal principal)
     {
-        var hashed = _tokenService.HashRefreshToken(request.RefreshToken);
-        var existing = await _db.RefreshTokens.FirstOrDefaultAsync(x => x.TokenHash == hashed, ct);
-        if (existing is null)
-        {
-            return ServiceResult<AuthResponse>.Fail("invalid_refresh_token");
-        }
-
-        if (existing.RevokedAt is not null || existing.ExpiresAt <= DateTimeOffset.UtcNow)
-        {
-            return ServiceResult<AuthResponse>.Fail("expired_refresh_token");
-        }
-
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == existing.UserId, ct);
+        var user = await _userManager.GetUserAsync(principal);
         if (user is null)
-        {
-            return ServiceResult<AuthResponse>.Fail("user_not_found");
-        }
+            throw new UnauthorizedAccessException("invalid_token");
 
-        existing.RevokedAt = DateTimeOffset.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        var logins = await _userManager.GetLoginsAsync(user);
+        if (logins is null || logins.Count == 0)
+            return Array.Empty<string>();
 
-        var tokens = await IssueTokensAsync(user, ct);
-
-        await _auditService.LogAsync(user.Id, "AUTH_REFRESH", "User", user.Id, ct: ct);
-
-        return ServiceResult<AuthResponse>.Ok(tokens);
+        return logins.Select(l => l.LoginProvider).Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
-    public Task<ServiceResult<AuthResponse>> LoginWithGoogleAsync(
+    public async Task GoogleLoginAsync(
         GoogleLoginRequest request,
-        CancellationToken ct = default
+        bool? useCookies = null,
+        bool? useSessionCookies = null
     )
     {
-        return LoginWithGoogleInternalAsync(request, ct);
-    }
-
-    private async Task<ServiceResult<AuthResponse>> LoginWithGoogleInternalAsync(
-        GoogleLoginRequest request,
-        CancellationToken ct
-    )
-    {
-        if (string.IsNullOrWhiteSpace(_googleOptions.ClientId))
-        {
-            return ServiceResult<AuthResponse>.Fail("google_not_configured");
-        }
-
-        if (string.IsNullOrWhiteSpace(request.IdToken))
-        {
-            return ServiceResult<AuthResponse>.Fail("invalid_google_token");
-        }
+        if (request is null || string.IsNullOrWhiteSpace(request.IdToken))
+            throw new ArgumentException("invalid_request");
 
         GoogleJsonWebSignature.Payload payload;
         try
         {
-            payload = await GoogleJsonWebSignature.ValidateAsync(
-                request.IdToken,
-                new GoogleJsonWebSignature.ValidationSettings
-                {
-                    Audience = new[] { _googleOptions.ClientId },
-                }
-            );
+            var settings = new GoogleJsonWebSignature.ValidationSettings
+            {
+                Audience = new[] { _googleOptions.Value.ClientId },
+            };
+            payload = await GoogleJsonWebSignature.ValidateAsync(request.IdToken, settings);
         }
         catch
         {
-            return ServiceResult<AuthResponse>.Fail("invalid_google_token");
+            throw new UnauthorizedAccessException("invalid_google_token");
         }
 
-        var email = payload.Email?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(email))
-        {
-            return ServiceResult<AuthResponse>.Fail("invalid_google_token");
-        }
+        if (
+            payload == null
+            || string.IsNullOrWhiteSpace(payload.Email)
+            || payload.EmailVerified != true
+        )
+            throw new UnauthorizedAccessException("invalid_google_token");
 
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
+        var email = payload.Email;
+        var user = await _userManager.FindByEmailAsync(email);
         if (user is null)
         {
-            var name = string.IsNullOrWhiteSpace(payload.Name)
-                ? payload.GivenName ?? email
-                : payload.Name;
-            var username = ExtractUsernameFromEmail(email);
+            // Create new user for Google sign-in
+            var initialUserName = ExtractUsernameFromEmail(email);
+            var normalizedUserName = NormalizeUsername(initialUserName);
 
+            var candidate = normalizedUserName;
+            var suffix = 1;
+            while (await _userManager.FindByNameAsync(candidate) is not null)
+            {
+                candidate = normalizedUserName + suffix.ToString();
+                suffix++;
+            }
+
+            normalizedUserName = candidate;
+            var displayName = string.IsNullOrWhiteSpace(payload.Name)
+                ? initialUserName
+                : payload.Name;
             user = new User
             {
-                Email = email,
-                NormalizedEmail = email,
-                Username = username,
-                NormalizedUsername = username,
-                Name = name,
-                NormalizedName = NormalizeName(name),
-                PasswordHash = _passwordHasher.Hash(_tokenService.GenerateRefreshToken()),
+                Email = NormalizeEmail(email),
+                UserName = normalizedUserName,
+                Name = displayName,
+                NormalizedName = NormalizeName(displayName),
                 Status = "ACTIVE",
+                EmailConfirmed = true,
                 EmailVerifiedAt = DateTimeOffset.UtcNow,
-                AvatarUrl = payload.Picture,
-                PersonalData = null,
             };
 
-            var userRole = await EnsureRoleAsync(RoleName.USER, ct);
+            // Create with random password (external login)
+            var randomPassword = Guid.NewGuid().ToString("N") + "!Aa1";
+            var createResult = await _userManager.CreateAsync(user, randomPassword);
+            if (!createResult.Succeeded)
+                throw new InvalidOperationException(
+                    createResult.Errors.FirstOrDefault()?.Code ?? "google_signup_failed"
+                );
 
-            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            await EnsureRoleAsync(RoleName.USER.ToString());
+            await _userManager.AddToRoleAsync(user, RoleName.USER.ToString());
 
-            _db.Users.Add(user);
-            await _db.SaveChangesAsync(ct);
+            if (!await _db.UserPersonalData.AnyAsync(x => x.UserId == user.Id))
+            {
+                _db.UserPersonalData.Add(new UserPersonalData { UserId = user.Id });
+                await _db.SaveChangesAsync();
+            }
+            // Ensure external login is associated when creating user via Google
+            var loginInfo = new UserLoginInfo("Google", payload.Subject ?? string.Empty, "Google");
+            var addLoginResult = await _userManager.AddLoginAsync(user, loginInfo);
+            if (!addLoginResult.Succeeded)
+            {
+                // If adding external login fails, continue (user can still sign in), but log via exception
+                throw new InvalidOperationException(
+                    addLoginResult.Errors.FirstOrDefault()?.Code ?? "add_external_login_failed"
+                );
+            }
+        }
 
-            _db.UserRoles.Add(new UserRole { UserId = user.Id, RoleName = userRole.Name });
-            await _db.SaveChangesAsync(ct);
-
-            var tokens = await IssueTokensAsync(user, ct);
-
-            await tx.CommitAsync(ct);
-
-            await _auditService.LogAsync(user.Id, "AUTH_GOOGLE_SIGNUP", "User", user.Id, ct: ct);
-
-            return ServiceResult<AuthResponse>.Ok(tokens);
+        // If the user exists but does not have the external login, attach it now
+        var existingLogins = await _userManager.GetLoginsAsync(user);
+        if (
+            !existingLogins.Any(l =>
+                string.Equals(l.LoginProvider, "Google", StringComparison.OrdinalIgnoreCase)
+                && l.ProviderKey == (payload.Subject ?? string.Empty)
+            )
+        )
+        {
+            var loginInfoExisting = new UserLoginInfo(
+                "Google",
+                payload.Subject ?? string.Empty,
+                "Google"
+            );
+            var addLoginResultExisting = await _userManager.AddLoginAsync(user, loginInfoExisting);
+            if (!addLoginResultExisting.Succeeded)
+            {
+                // ignore failure to add when user already exists; it's non-fatal for sign-in
+            }
         }
 
         if (!string.Equals(user.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-        {
-            return ServiceResult<AuthResponse>.Fail("user_inactive");
-        }
+            throw new InvalidOperationException("user_inactive");
 
-        if (user.EmailVerifiedAt is null)
-        {
-            user.EmailVerifiedAt = DateTimeOffset.UtcNow;
-            await _db.SaveChangesAsync(ct);
-        }
+        var useCookieScheme = useCookies == true || useSessionCookies == true;
+        var isPersistent = useCookies == true && useSessionCookies != true;
+        _signInManager.AuthenticationScheme = useCookieScheme
+            ? IdentityConstants.ApplicationScheme
+            : IdentityConstants.BearerScheme;
 
-        var result = await IssueTokensAsync(user, ct);
-        await _auditService.LogAsync(user.Id, "AUTH_GOOGLE_LOGIN", "User", user.Id, ct: ct);
-
-        return ServiceResult<AuthResponse>.Ok(result);
+        await _signInManager.SignInAsync(user, isPersistent);
     }
 
-    public async Task<ServiceResult<bool>> LogoutAsync(
-        Guid userId,
-        LogoutRequest request,
-        CancellationToken ct = default
-    )
+    public async Task SignUpAsync(SignupRequest request, CancellationToken ct)
     {
-        var hashed = _tokenService.HashRefreshToken(request.RefreshToken);
-        var existing = await _db.RefreshTokens.FirstOrDefaultAsync(x => x.TokenHash == hashed, ct);
+        if (
+            string.IsNullOrWhiteSpace(request.Email)
+            || string.IsNullOrWhiteSpace(request.UserName)
+            || string.IsNullOrWhiteSpace(request.Password)
+        )
+            throw new ArgumentException("invalid_request");
 
-        if (existing is not null && existing.RevokedAt is null)
+        if (!string.Equals(request.Password, request.ConfirmPassword, StringComparison.Ordinal))
+            throw new ArgumentException("password_mismatch");
+
+        if (await _userManager.FindByEmailAsync(request.Email) is not null)
+            throw new ArgumentException("email_already_registered");
+
+        // Always derive the username from the email local-part (ignore any client-supplied username).
+        var initialUserName = ExtractUsernameFromEmail(request.Email);
+
+        var normalizedUserName = NormalizeUsername(initialUserName);
+
+        // Ensure uniqueness by appending a numeric suffix if needed.
+        var candidate = normalizedUserName;
+        var suffix = 1;
+        while (await _userManager.FindByNameAsync(candidate) is not null)
         {
-            existing.RevokedAt = DateTimeOffset.UtcNow;
-            await _db.SaveChangesAsync(ct);
+            candidate = normalizedUserName + suffix.ToString();
+            suffix++;
         }
 
-        if (existing is not null)
+        normalizedUserName = candidate;
+
+        var displayName = string.IsNullOrWhiteSpace(request.Name)
+            ? request.UserName.Trim()
+            : request.Name.Trim();
+
+        var user = new User
         {
-            await _auditService.LogAsync(
-                userId,
-                "AUTH_LOGOUT",
-                "RefreshToken",
-                existing.Id,
-                ct: ct
+            Email = NormalizeEmail(request.Email),
+            UserName = normalizedUserName,
+            Name = displayName,
+            NormalizedName = NormalizeName(displayName),
+            Status = "ACTIVE",
+        };
+
+        var createResult = await _userManager.CreateAsync(user, request.Password);
+        if (!createResult.Succeeded)
+            throw new InvalidOperationException(
+                createResult.Errors.FirstOrDefault()?.Code ?? "signup_failed"
             );
+
+        await EnsureRoleAsync(RoleName.USER.ToString());
+        await _userManager.AddToRoleAsync(user, RoleName.USER.ToString());
+
+        if (!await _db.UserPersonalData.AnyAsync(x => x.UserId == user.Id, ct))
+        {
+            _db.UserPersonalData.Add(new UserPersonalData { UserId = user.Id });
+            await _db.SaveChangesAsync(ct);
         }
 
-        return ServiceResult<bool>.Ok(true);
+        await SendConfirmationEmailAsync(user, ct);
     }
 
-    public async Task<ServiceResult<ForgotPasswordResponse>> ForgotPasswordAsync(
-        ForgotPasswordRequest request,
-        CancellationToken ct = default
-    )
+    public async Task SignInAsync(LoginRequest request, bool? useCookies, bool? useSessionCookies)
     {
-        var normalizedEmail = NormalizeEmail(request.Email);
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+        var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null)
-        {
-            return ServiceResult<ForgotPasswordResponse>.Ok(
-                new ForgotPasswordResponse { ResetToken = null, ExpiresAt = null }
-            );
-        }
+            throw new UnauthorizedAccessException("invalid_credentials");
 
-        var rawToken = _tokenService.GenerateRefreshToken();
-        var tokenHash = _tokenService.HashRefreshToken(rawToken);
-        var expiresAt = DateTimeOffset.UtcNow.Add(PasswordResetTtl);
+        if (!string.Equals(user.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("user_inactive");
 
-        _db.PasswordResetTokens.Add(
-            new PasswordResetToken
-            {
-                UserId = user.Id,
-                TokenHash = tokenHash,
-                ExpiresAt = expiresAt,
-            }
+        if (!user.EmailConfirmed)
+            throw new InvalidOperationException("email_not_confirmed");
+
+        var useCookieScheme = useCookies == true || useSessionCookies == true;
+        var isPersistent = useCookies == true && useSessionCookies != true;
+        _signInManager.AuthenticationScheme = useCookieScheme
+            ? IdentityConstants.ApplicationScheme
+            : IdentityConstants.BearerScheme;
+
+        var result = await _signInManager.PasswordSignInAsync(
+            user,
+            request.Password,
+            isPersistent,
+            lockoutOnFailure: true
         );
+        if (result.RequiresTwoFactor)
+            result = await HandleTwoFactorAsync(request, isPersistent);
 
-        await _db.SaveChangesAsync(ct);
-        await _auditService.LogAsync(user.Id, "AUTH_FORGOT_PASSWORD", "User", user.Id, ct: ct);
-
-        return ServiceResult<ForgotPasswordResponse>.Ok(
-            new ForgotPasswordResponse { ResetToken = rawToken, ExpiresAt = expiresAt }
-        );
+        if (result.IsLockedOut)
+            throw new InvalidOperationException("user_locked_out");
+        if (!result.Succeeded)
+            throw new UnauthorizedAccessException("invalid_credentials");
     }
 
-    private async Task<string> CreateEmailVerificationTokenAsync(
-        User user,
+    public async Task SignOutAsync()
+    {
+        await _signInManager.SignOutAsync();
+    }
+
+    public async Task RefreshAsync(RefreshRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken))
+            throw new UnauthorizedAccessException("invalid_refresh_token");
+
+        var options = _bearerOptions.Get(IdentityConstants.BearerScheme);
+        var refreshTicket = options.RefreshTokenProtector.Unprotect(request.RefreshToken);
+        var expiresUtc = refreshTicket?.Properties?.ExpiresUtc;
+        if (refreshTicket is null || expiresUtc is null || expiresUtc <= DateTimeOffset.UtcNow)
+            throw new UnauthorizedAccessException("invalid_refresh_token");
+
+        var principal = refreshTicket.Principal;
+        var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new UnauthorizedAccessException("invalid_refresh_token");
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user is null)
+            throw new UnauthorizedAccessException("invalid_refresh_token");
+
+        if (await _signInManager.ValidateSecurityStampAsync(principal) is null)
+            throw new UnauthorizedAccessException("invalid_refresh_token");
+
+        _signInManager.AuthenticationScheme = IdentityConstants.BearerScheme;
+        await _signInManager.SignInAsync(user, isPersistent: false);
+    }
+
+    public async Task ConfirmEmailAsync(Guid userId, string code, string? newEmail)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+            throw new KeyNotFoundException("user_not_found");
+        if (string.IsNullOrWhiteSpace(code))
+            throw new ArgumentException("invalid_token");
+
+        string decodedCode;
+        try
+        {
+            decodedCode = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(code));
+        }
+        catch
+        {
+            throw new ArgumentException("invalid_token");
+        }
+
+        IdentityResult result = !string.IsNullOrWhiteSpace(newEmail)
+            ? await _userManager.ChangeEmailAsync(user, newEmail, decodedCode)
+            : await _userManager.ConfirmEmailAsync(user, decodedCode);
+
+        if (!result.Succeeded)
+            throw new ArgumentException("invalid_token");
+
+        if (!user.EmailConfirmed)
+            user.EmailConfirmed = true;
+        user.EmailVerifiedAt = DateTimeOffset.UtcNow;
+        await _userManager.UpdateAsync(user);
+    }
+
+    public async Task ResendConfirmationEmailAsync(
+        ResendConfirmationEmailRequest request,
         CancellationToken ct
     )
     {
-        var rawToken = _tokenService.GenerateRefreshToken();
-        var tokenHash = _tokenService.HashRefreshToken(rawToken);
-        var expiresAt = DateTimeOffset.UtcNow.Add(EmailVerificationTtl);
-
-        _db.EmailVerificationTokens.Add(new EmailVerificationToken
-        {
-            UserId = user.Id,
-            TokenHash = tokenHash,
-            ExpiresAt = expiresAt,
-        });
-
-        await _db.SaveChangesAsync(ct);
-
-        return rawToken;
+        var user = await _userManager.FindByEmailAsync(request.Email);
+        if (user is null || user.EmailConfirmed)
+            return;
+        await SendConfirmationEmailAsync(user, ct);
     }
 
-    public async Task<ServiceResult<bool>> ResetPasswordAsync(
-        ResetPasswordRequest request,
-        CancellationToken ct = default
-    )
+    public async Task ForgotPasswordAsync(ForgotPasswordRequest request, CancellationToken ct)
     {
-        var tokenHash = _tokenService.HashRefreshToken(request.Token);
-        var token = await _db.PasswordResetTokens.FirstOrDefaultAsync(
-            x => x.TokenHash == tokenHash,
+        var user = await _userManager.FindByEmailAsync(request.Email);
+        if (user is null)
+            return;
+        var resetCode = await _userManager.GeneratePasswordResetTokenAsync(user);
+        await _emailSender.SendForgotPasswordAsync(
+            user.Email ?? request.Email,
+            user.UserName ?? string.Empty,
+            resetCode,
             ct
         );
-        if (token is null || token.UsedAt is not null || token.ExpiresAt <= DateTimeOffset.UtcNow)
-        {
-            return ServiceResult<bool>.Fail("invalid_reset_token");
-        }
-
-        var user = await _db.Users.FirstOrDefaultAsync(x => x.Id == token.UserId, ct);
-        if (user is null)
-        {
-            return ServiceResult<bool>.Fail("user_not_found");
-        }
-
-        user.PasswordHash = _passwordHasher.Hash(request.Password);
-        token.UsedAt = DateTimeOffset.UtcNow;
-
-        var refreshTokens = await _db
-            .RefreshTokens.Where(x => x.UserId == user.Id && x.RevokedAt == null)
-            .ToListAsync(ct);
-        foreach (var refresh in refreshTokens)
-        {
-            refresh.RevokedAt = DateTimeOffset.UtcNow;
-        }
-
-        await _db.SaveChangesAsync(ct);
-        await _auditService.LogAsync(user.Id, "AUTH_RESET_PASSWORD", "User", user.Id, ct: ct);
-
-        return ServiceResult<bool>.Ok(true);
     }
 
-    public async Task<ServiceResult<bool>> VerifyEmailAsync(
-        VerifyEmailRequest request,
-        CancellationToken ct = default
-    )
+    public async Task VerifyResetCodeAsync(VerifyResetCodeRequest request)
     {
-        var tokenHash = _tokenService.HashRefreshToken(request.Token);
-        var token = await _db.EmailVerificationTokens.FirstOrDefaultAsync(
-            x => x.TokenHash == tokenHash,
+        var user = await _userManager.FindByEmailAsync(request.Email);
+        if (user is null)
+            throw new KeyNotFoundException("user_not_found");
+
+        var isValid = await _userManager.VerifyUserTokenAsync(
+            user,
+            Pruduct.Business.Providers.PasswordResetTokenProvider<User>.ProviderName,
+            "ResetPassword",
+            request.ResetCode
+        );
+
+        if (!isValid)
+            throw new ArgumentException("invalid_reset_token");
+    }
+
+    public async Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken ct)
+    {
+        if (!string.Equals(request.Password, request.ConfirmPassword, StringComparison.Ordinal))
+            throw new ArgumentException("password_mismatch");
+
+        var user = await _userManager.FindByEmailAsync(request.Email);
+        if (user is null)
+            throw new ArgumentException("invalid_reset_token");
+
+        var result = await _userManager.ResetPasswordAsync(
+            user,
+            request.ResetCode,
+            request.Password
+        );
+        if (!result.Succeeded)
+            throw new ArgumentException("invalid_reset_token");
+
+        await _emailSender.SendResetPasswordConfirmationAsync(
+            user.Email ?? request.Email,
+            user.UserName ?? string.Empty,
             ct
         );
-        if (token is null || token.UsedAt is not null || token.ExpiresAt <= DateTimeOffset.UtcNow)
-        {
-            return ServiceResult<bool>.Fail("invalid_verify_token");
-        }
+    }
 
-        var user = await _db.Users.FirstOrDefaultAsync(x => x.Id == token.UserId, ct);
+    public async Task ChangePasswordAsync(
+        ClaimsPrincipal principal,
+        ChangePasswordRequest request,
+        CancellationToken ct
+    )
+    {
+        var user = await _userManager.GetUserAsync(principal);
         if (user is null)
-        {
-            return ServiceResult<bool>.Fail("user_not_found");
-        }
+            throw new UnauthorizedAccessException("invalid_token");
 
-        if (user.EmailVerifiedAt is null)
-        {
-            user.EmailVerifiedAt = DateTimeOffset.UtcNow;
-        }
+        // If the account is linked to an external provider (e.g. Google), disallow password changes
+        if (await HasExternalLoginAsync(principal, "Google"))
+            throw new InvalidOperationException("external_account_cannot_change_password");
 
-        token.UsedAt = DateTimeOffset.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        if (!string.Equals(request.NewPassword, request.ConfirmPassword, StringComparison.Ordinal))
+            throw new ArgumentException("password_mismatch");
 
-        await _auditService.LogAsync(user.Id, "AUTH_VERIFY_EMAIL", "User", user.Id, ct: ct);
+        var result = await _userManager.ChangePasswordAsync(
+            user,
+            request.OldPassword,
+            request.NewPassword
+        );
+        if (!result.Succeeded)
+            throw new ArgumentException(result.Errors.FirstOrDefault()?.Code ?? "invalid_password");
 
-        return ServiceResult<bool>.Ok(true);
+        await _emailSender.SendResetPasswordConfirmationAsync(
+            user.Email ?? string.Empty,
+            user.UserName ?? string.Empty,
+            ct
+        );
     }
 
-    private async Task<Role> EnsureRoleAsync(RoleName roleName, CancellationToken ct)
+    public async Task<InfoResponse> GetInfoAsync(ClaimsPrincipal principal)
     {
-        var role = await _db.Roles.FirstOrDefaultAsync(r => r.Name == roleName, ct);
-        if (role is not null)
-            return role;
-
-        role = new Role { Name = roleName };
-        _db.Roles.Add(role);
-        await _db.SaveChangesAsync(ct);
-        return role;
+        var user = await _userManager.GetUserAsync(principal);
+        if (user is null)
+            throw new UnauthorizedAccessException("invalid_token");
+        return new InfoResponse { Email = user.Email, IsEmailConfirmed = user.EmailConfirmed };
     }
 
-    private async Task<AuthResponse> IssueTokensAsync(User user, CancellationToken ct)
+    public async Task<InfoResponse> UpdateInfoAsync(
+        ClaimsPrincipal principal,
+        InfoRequest request,
+        CancellationToken ct
+    )
     {
-        var roles = await _db
-            .UserRoles.Where(ur => ur.UserId == user.Id)
-            .Join(_db.Roles, ur => ur.RoleName, r => r.Name, (ur, r) => r.Name)
-            .ToListAsync(ct);
+        var user = await _userManager.GetUserAsync(principal);
+        if (user is null)
+            throw new UnauthorizedAccessException("invalid_token");
 
-        if (roles.Count == 0)
+        if (!string.IsNullOrWhiteSpace(request.NewEmail))
         {
-            var userRole = await EnsureRoleAsync(RoleName.USER, ct);
-            _db.UserRoles.Add(new UserRole { UserId = user.Id, RoleName = userRole.Name });
-            await _db.SaveChangesAsync(ct);
-            roles.Add(userRole.Name);
+            if (await _userManager.FindByEmailAsync(request.NewEmail) is not null)
+                throw new ArgumentException("email_taken");
+
+            var token = await _userManager.GenerateChangeEmailTokenAsync(user, request.NewEmail);
+            var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+            var confirmUrl = BuildConfirmEmailUrl(_frontendOptions.Value.BaseUrl, user.Id, code);
+            await _emailSender.SendChangeEmailAsync(
+                request.NewEmail,
+                user.UserName ?? string.Empty,
+                confirmUrl,
+                ct
+            );
         }
 
-        var subject = new TokenSubject(user.Id, user.Email, user.Username, user.Name);
-
-        var roleStrings = roles.Select(r => r.ToString()).ToArray();
-
-        var accessToken = _tokenService.GenerateAccessToken(subject, roleStrings);
-        var refreshRaw = _tokenService.GenerateRefreshToken();
-        var refreshHash = _tokenService.HashRefreshToken(refreshRaw);
-
-        var refreshToken = new RefreshToken
+        if (!string.IsNullOrWhiteSpace(request.NewPassword))
         {
-            UserId = user.Id,
-            TokenHash = refreshHash,
-            ExpiresAt = DateTimeOffset.UtcNow.AddDays(_jwtOptions.RefreshTokenDays),
+            // Disallow password change for users authenticated via external providers
+            if (await HasExternalLoginAsync(principal, "Google"))
+                throw new InvalidOperationException("external_account_cannot_change_password");
+
+            if (string.IsNullOrWhiteSpace(request.OldPassword))
+                throw new ArgumentException("old_password_required");
+            var result = await _userManager.ChangePasswordAsync(
+                user,
+                request.OldPassword,
+                request.NewPassword
+            );
+            if (!result.Succeeded)
+                throw new ArgumentException("invalid_password");
+        }
+
+        return new InfoResponse { Email = user.Email, IsEmailConfirmed = user.EmailConfirmed };
+    }
+
+    public async Task<TwoFactorResponse> GetTwoFactorAsync(ClaimsPrincipal principal)
+    {
+        var user = await _userManager.GetUserAsync(principal);
+        if (user is null)
+            throw new UnauthorizedAccessException("invalid_token");
+
+        var key = await _userManager.GetAuthenticatorKeyAsync(user);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            await _userManager.ResetAuthenticatorKeyAsync(user);
+            key = await _userManager.GetAuthenticatorKeyAsync(user);
+        }
+
+        var isEnabled = await _userManager.GetTwoFactorEnabledAsync(user);
+        var isRemembered = await _signInManager.IsTwoFactorClientRememberedAsync(user);
+        var recoveryCodesLeft = await _userManager.CountRecoveryCodesAsync(user);
+
+        return new TwoFactorResponse
+        {
+            SharedKey = key,
+            RecoveryCodesLeft = recoveryCodesLeft,
+            IsTwoFactorEnabled = isEnabled,
+            IsMachineRemembered = isRemembered,
         };
-
-        _db.RefreshTokens.Add(refreshToken);
-        await _db.SaveChangesAsync(ct);
-
-        var personal = await _db
-            .UserPersonalData.Include(p => p.Address)
-            .FirstOrDefaultAsync(p => p.UserId == user.Id, ct);
-        var address = personal?.Address;
-
-        var personalView = personal is null
-            ? null
-            : new UserPersonalDataView
-            {
-                Cpf = personal.Cpf,
-                PhoneNumber = personal.PhoneNumber,
-                Address = address is null
-                    ? null
-                    : new UserAddressView
-                    {
-                        ZipCode = address.ZipCode,
-                        Street = address.Street,
-                        Neighborhood = address.Neighborhood,
-                        Number = address.Number,
-                        Complement = address.Complement,
-                        City = address.City,
-                        State = address.State,
-                        Country = address.Country,
-                    },
-            };
-
-        var userView = new UserView
-        {
-            Id = user.Id,
-            Email = user.Email,
-            Username = user.Username,
-            Name = user.Name,
-            AvatarUrl = user.AvatarUrl,
-            Roles = roleStrings,
-            PersonalData = personalView,
-        };
-
-        return new AuthResponse { AccessToken = accessToken, RefreshToken = refreshRaw, User = userView };
     }
 
-    private static string ExtractUsernameFromEmail(string email)
+    public async Task<TwoFactorResponse> UpdateTwoFactorAsync(
+        ClaimsPrincipal principal,
+        TwoFactorRequest request
+    )
     {
-        var atIndex = email.IndexOf('@');
-        if (atIndex <= 0)
+        var user = await _userManager.GetUserAsync(principal);
+        if (user is null)
+            throw new UnauthorizedAccessException("invalid_token");
+
+        if (request.ForgetMachine == true)
+            await _signInManager.ForgetTwoFactorClientAsync();
+        if (request.ResetSharedKey == true)
         {
-            return email;
+            await _userManager.ResetAuthenticatorKeyAsync(user);
+            await _userManager.SetTwoFactorEnabledAsync(user, false);
         }
 
-        var localPart = email[..atIndex];
-        var value = string.IsNullOrWhiteSpace(localPart) ? email : localPart;
-        return RemoveDiacritics(value).ToLowerInvariant();
+        if (request.Enable == true)
+        {
+            if (string.IsNullOrWhiteSpace(request.TwoFactorCode))
+                throw new ArgumentException("two_factor_code_required");
+            var verificationCode = request.TwoFactorCode.Replace(" ", string.Empty);
+            var isValid = await _userManager.VerifyTwoFactorTokenAsync(
+                user,
+                TokenOptions.DefaultAuthenticatorProvider,
+                verificationCode
+            );
+            if (!isValid)
+                throw new ArgumentException("invalid_two_factor_code");
+            await _userManager.SetTwoFactorEnabledAsync(user, true);
+        }
+        else if (request.Enable == false)
+        {
+            await _userManager.SetTwoFactorEnabledAsync(user, false);
+        }
+
+        string[] recoveryCodes = Array.Empty<string>();
+        if (request.ResetRecoveryCodes == true || request.Enable == true)
+        {
+            var generated = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
+            recoveryCodes = generated?.ToArray() ?? Array.Empty<string>();
+        }
+
+        var key = await _userManager.GetAuthenticatorKeyAsync(user);
+        var isEnabledNow = await _userManager.GetTwoFactorEnabledAsync(user);
+        var isRememberedNow = await _signInManager.IsTwoFactorClientRememberedAsync(user);
+        var recoveryCodesLeftNow = await _userManager.CountRecoveryCodesAsync(user);
+
+        return new TwoFactorResponse
+        {
+            SharedKey = key,
+            RecoveryCodesLeft = recoveryCodesLeftNow,
+            RecoveryCodes = recoveryCodes,
+            IsTwoFactorEnabled = isEnabledNow,
+            IsMachineRemembered = isRememberedNow,
+        };
+    }
+
+    // Helpers copied from endpoints
+    private static string BuildConfirmEmailUrl(string? baseUrl, Guid userId, string code)
+    {
+        var normalizedBase = string.IsNullOrWhiteSpace(baseUrl)
+            ? string.Empty
+            : baseUrl.TrimEnd('/');
+        return string.IsNullOrWhiteSpace(normalizedBase)
+            ? string.Empty
+            : $"{normalizedBase}/confirm-email/{userId}/{code}";
     }
 
     private static string NormalizeEmail(string email) =>
@@ -526,27 +618,82 @@ public class AuthService : IAuthService
         return RemoveDiacritics(trimmed);
     }
 
+    private static string NormalizeUsername(string username) =>
+        RemoveDiacritics(username).Trim().ToLowerInvariant();
+
+    private static string ExtractUsernameFromEmail(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+            return string.Empty;
+
+        var atIndex = email.IndexOf('@');
+        if (atIndex <= 0)
+            return NormalizeUsername(email);
+
+        var localPart = email[..atIndex];
+        return NormalizeUsername(localPart);
+    }
+
     private static string RemoveDiacritics(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-        {
             return string.Empty;
-        }
-
         var normalized = value.Normalize(NormalizationForm.FormD);
         Span<char> buffer = stackalloc char[normalized.Length];
         var idx = 0;
-
         foreach (var c in normalized)
         {
             var category = CharUnicodeInfo.GetUnicodeCategory(c);
             if (category != UnicodeCategory.NonSpacingMark)
-            {
                 buffer[idx++] = c;
-            }
         }
-
         return new string(buffer[..idx]).Normalize(NormalizationForm.FormC);
     }
-}
 
+    private async Task EnsureRoleAsync(string roleName)
+    {
+        if (await _roleManager.RoleExistsAsync(roleName))
+            return;
+        var normalized = _roleManager.NormalizeKey(roleName) ?? roleName;
+        await _roleManager.CreateAsync(
+            new Role
+            {
+                Id = Guid.NewGuid(),
+                Name = roleName,
+                NormalizedName = normalized,
+                ConcurrencyStamp = Guid.NewGuid().ToString(),
+            }
+        );
+    }
+
+    private async Task SendConfirmationEmailAsync(User user, CancellationToken ct)
+    {
+        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+        var confirmUrl = BuildConfirmEmailUrl(_frontendOptions.Value.BaseUrl, user.Id, code);
+        await _emailSender.SendEmailVerificationAsync(
+            user.Email ?? string.Empty,
+            user.UserName ?? string.Empty,
+            confirmUrl,
+            ct
+        );
+    }
+
+    private async Task<SignInResult> HandleTwoFactorAsync(LoginRequest request, bool isPersistent)
+    {
+        if (!string.IsNullOrWhiteSpace(request.TwoFactorRecoveryCode))
+            return await _signInManager.TwoFactorRecoveryCodeSignInAsync(
+                request.TwoFactorRecoveryCode
+            );
+        if (!string.IsNullOrWhiteSpace(request.TwoFactorCode))
+        {
+            var code = request.TwoFactorCode.Replace(" ", string.Empty);
+            return await _signInManager.TwoFactorAuthenticatorSignInAsync(
+                code,
+                isPersistent,
+                false
+            );
+        }
+        return SignInResult.Failed;
+    }
+}

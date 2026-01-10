@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Audit;
 
 namespace Pruduct.Data.Database.Contexts;
 

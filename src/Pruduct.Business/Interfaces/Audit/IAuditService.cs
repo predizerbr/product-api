@@ -1,4 +1,4 @@
-namespace Pruduct.Business.Abstractions;
+namespace Pruduct.Business.Interfaces.Audit;
 
 public interface IAuditService
 {

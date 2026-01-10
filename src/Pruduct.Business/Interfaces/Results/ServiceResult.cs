@@ -1,4 +1,4 @@
-namespace Pruduct.Business.Abstractions.Results;
+namespace Pruduct.Business.Interfaces.Results;
 
 public record ServiceResult<T>(bool Success, string? Error, T? Data)
 {

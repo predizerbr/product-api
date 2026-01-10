@@ -1,14 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Users;
 
-namespace Pruduct.Data.Configurations;
+namespace Pruduct.Data.Configurations.Users;
 
 public class RoleConfiguration : IEntityTypeConfiguration<Role>
 {
     public void Configure(EntityTypeBuilder<Role> builder)
     {
-        builder.HasKey(x => x.Name);
-        builder.Property(x => x.Name).HasConversion<string>().IsRequired();
+        builder.ToTable("AspNetRoles");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Name).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.NormalizedName).HasMaxLength(256);
+        builder.HasIndex(x => x.NormalizedName).IsUnique();
     }
 }

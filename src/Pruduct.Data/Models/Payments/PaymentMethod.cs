@@ -1,7 +1,8 @@
 using Pruduct.Common.Entities;
 using Pruduct.Common.Enums;
+using Pruduct.Data.Models.Users;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Payments;
 
 public class PaymentMethod : Entity<Guid>
 {

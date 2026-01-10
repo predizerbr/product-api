@@ -1,13 +1,17 @@
 using System.Globalization;
 using System.Text;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Pruduct.Business.Abstractions;
+using Pruduct.Business.Interfaces.Auth;
+using Pruduct.Business.Interfaces.Users;
 using Pruduct.Common.Enums;
 using Pruduct.Data.Database.Contexts;
-using Pruduct.Data.Models;
+using Pruduct.Data.Models.Payments;
+using Pruduct.Data.Models.Users;
+using Pruduct.Data.Models.Wallet;
 
-namespace Pruduct.Business.Services;
+namespace Pruduct.Business.Services.Users;
 
 public class DatabaseSeeder : IDatabaseSeeder
 {
@@ -33,9 +37,19 @@ public class DatabaseSeeder : IDatabaseSeeder
         };
         foreach (var roleName in roles)
         {
-            if (!await _db.Roles.AnyAsync(r => r.Name == roleName, ct))
+            var roleValue = roleName.ToString();
+            var normalizedRole = NormalizeRoleName(roleValue);
+            if (!await _db.Roles.AnyAsync(r => r.Name == roleValue, ct))
             {
-                _db.Roles.Add(new Role { Name = roleName });
+                _db.Roles.Add(
+                    new Role
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = roleValue,
+                        NormalizedName = normalizedRole,
+                        ConcurrencyStamp = Guid.NewGuid().ToString(),
+                    }
+                );
             }
         }
 
@@ -74,11 +88,15 @@ public class DatabaseSeeder : IDatabaseSeeder
             {
                 Email = normalizedEmail,
                 NormalizedEmail = normalizedEmail,
-                Username = username,
-                NormalizedUsername = username,
+                UserName = username,
+                NormalizedUserName = username,
                 Name = adminName,
                 NormalizedName = normalizedName,
                 PasswordHash = _hasher.Hash(adminPassword),
+                SecurityStamp = Guid.NewGuid().ToString(),
+                ConcurrencyStamp = Guid.NewGuid().ToString(),
+                EmailConfirmed = true,
+                EmailVerifiedAt = DateTimeOffset.UtcNow,
                 Status = "ACTIVE",
                 PersonalData = new UserPersonalData
                 {
@@ -94,15 +112,17 @@ public class DatabaseSeeder : IDatabaseSeeder
 
         await EnsurePaymentMethodsAsync(admin, seedSection, ct);
 
-        var adminRole = await _db.Roles.FirstAsync(r => r.Name == RoleName.ADMIN_L3, ct);
+        var adminRole = await _db.Roles.FirstAsync(r => r.Name == RoleName.ADMIN_L3.ToString(), ct);
         if (
             !await _db.UserRoles.AnyAsync(
-                ur => ur.UserId == admin.Id && ur.RoleName == adminRole.Name,
+                ur => ur.UserId == admin.Id && ur.RoleId == adminRole.Id,
                 ct
             )
         )
         {
-            _db.UserRoles.Add(new UserRole { UserId = admin.Id, RoleName = adminRole.Name });
+            _db.UserRoles.Add(
+                new IdentityUserRole<Guid> { UserId = admin.Id, RoleId = adminRole.Id }
+            );
             await _db.SaveChangesAsync(ct);
         }
 
@@ -143,11 +163,15 @@ public class DatabaseSeeder : IDatabaseSeeder
             {
                 Email = normalizedEmail,
                 NormalizedEmail = normalizedEmail,
-                Username = username,
-                NormalizedUsername = username,
+                UserName = username,
+                NormalizedUserName = username,
                 Name = userName,
                 NormalizedName = normalizedName,
                 PasswordHash = _hasher.Hash(userPassword),
+                SecurityStamp = Guid.NewGuid().ToString(),
+                ConcurrencyStamp = Guid.NewGuid().ToString(),
+                EmailConfirmed = true,
+                EmailVerifiedAt = DateTimeOffset.UtcNow,
                 Status = "ACTIVE",
                 PersonalData = null,
             };
@@ -168,15 +192,17 @@ public class DatabaseSeeder : IDatabaseSeeder
 
         await EnsurePaymentMethodsAsync(user, seedSection, ct);
 
-        var userRole = await _db.Roles.FirstAsync(r => r.Name == RoleName.USER, ct);
+        var userRole = await _db.Roles.FirstAsync(r => r.Name == RoleName.USER.ToString(), ct);
         if (
             !await _db.UserRoles.AnyAsync(
-                ur => ur.UserId == user.Id && ur.RoleName == userRole.Name,
+                ur => ur.UserId == user.Id && ur.RoleId == userRole.Id,
                 ct
             )
         )
         {
-            _db.UserRoles.Add(new UserRole { UserId = user.Id, RoleName = userRole.Name });
+            _db.UserRoles.Add(
+                new IdentityUserRole<Guid> { UserId = user.Id, RoleId = userRole.Id }
+            );
             await _db.SaveChangesAsync(ct);
         }
     }
@@ -341,7 +367,7 @@ public class DatabaseSeeder : IDatabaseSeeder
     {
         var candidate = username;
         var suffix = 1;
-        while (await _db.Users.AnyAsync(u => u.NormalizedUsername == candidate, ct))
+        while (await _db.Users.AnyAsync(u => u.NormalizedUserName == candidate, ct))
         {
             candidate = $"{username}{suffix}";
             suffix++;
@@ -374,6 +400,9 @@ public class DatabaseSeeder : IDatabaseSeeder
 
     private static string NormalizeUsername(string username) =>
         RemoveDiacritics(username).Trim().ToLowerInvariant();
+
+    private static string NormalizeRoleName(string roleName) =>
+        RemoveDiacritics(roleName).Trim().ToLowerInvariant();
 
     private static UserAddress? BuildAddress(IConfiguration section, string? fallbackStreet)
     {
@@ -428,9 +457,7 @@ public class DatabaseSeeder : IDatabaseSeeder
             return;
         }
 
-        var existing = await _db.PaymentMethods
-            .Where(x => x.UserId == user.Id)
-            .ToListAsync(ct);
+        var existing = await _db.PaymentMethods.Where(x => x.UserId == user.Id).ToListAsync(ct);
 
         foreach (var method in methods)
         {
@@ -468,13 +495,15 @@ public class DatabaseSeeder : IDatabaseSeeder
 
         if (!string.IsNullOrWhiteSpace(pixKey))
         {
-            methods.Add(new PaymentMethod
-            {
-                UserId = userId,
-                Type = PaymentMethodType.PIX,
-                PixKey = pixKey,
-                IsDefault = true,
-            });
+            methods.Add(
+                new PaymentMethod
+                {
+                    UserId = userId,
+                    Type = PaymentMethodType.PIX,
+                    PixKey = pixKey,
+                    IsDefault = true,
+                }
+            );
         }
 
         if (
@@ -483,18 +512,20 @@ public class DatabaseSeeder : IDatabaseSeeder
             && !string.IsNullOrWhiteSpace(accountNumber)
         )
         {
-            methods.Add(new PaymentMethod
-            {
-                UserId = userId,
-                Type = PaymentMethodType.BANK_ACCOUNT,
-                BankCode = bankCode,
-                BankName = bankName,
-                Agency = agency,
-                AccountNumber = accountNumber,
-                AccountDigit = accountDigit,
-                AccountType = accountType,
-                IsDefault = methods.Count == 0,
-            });
+            methods.Add(
+                new PaymentMethod
+                {
+                    UserId = userId,
+                    Type = PaymentMethodType.BANK_ACCOUNT,
+                    BankCode = bankCode,
+                    BankName = bankName,
+                    Agency = agency,
+                    AccountNumber = accountNumber,
+                    AccountDigit = accountDigit,
+                    AccountType = accountType,
+                    IsDefault = methods.Count == 0,
+                }
+            );
         }
 
         return methods;
@@ -510,13 +541,11 @@ public class DatabaseSeeder : IDatabaseSeeder
         return existing.Type switch
         {
             PaymentMethodType.PIX => string.Equals(existing.PixKey, candidate.PixKey),
-            PaymentMethodType.CARD =>
-                string.Equals(existing.CardLast4, candidate.CardLast4)
+            PaymentMethodType.CARD => string.Equals(existing.CardLast4, candidate.CardLast4)
                 && string.Equals(existing.CardBrand, candidate.CardBrand)
                 && existing.CardExpMonth == candidate.CardExpMonth
                 && existing.CardExpYear == candidate.CardExpYear,
-            PaymentMethodType.BANK_ACCOUNT =>
-                string.Equals(existing.BankCode, candidate.BankCode)
+            PaymentMethodType.BANK_ACCOUNT => string.Equals(existing.BankCode, candidate.BankCode)
                 && string.Equals(existing.Agency, candidate.Agency)
                 && string.Equals(existing.AccountNumber, candidate.AccountNumber)
                 && string.Equals(existing.AccountDigit, candidate.AccountDigit),

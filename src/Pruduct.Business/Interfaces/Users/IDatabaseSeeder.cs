@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Configuration;
 
-namespace Pruduct.Business.Abstractions;
+namespace Pruduct.Business.Interfaces.Users;
 
 public interface IDatabaseSeeder
 {

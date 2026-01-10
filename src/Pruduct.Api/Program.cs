@@ -1,6 +1,5 @@
-using Microsoft.Extensions.DependencyInjection;
 using Pruduct.Api.Configuration;
-using Pruduct.Business.Abstractions;
+using Pruduct.Business.Interfaces.Users;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,5 +19,7 @@ using (var scope = app.Services.CreateScope())
     var seeder = scope.ServiceProvider.GetRequiredService<IDatabaseSeeder>();
     await seeder.SeedAsync(app.Configuration);
 }
+
+// Auth endpoints are provided by AuthController now (MVC controllers are registered in AddApiServices)
 
 app.Run();

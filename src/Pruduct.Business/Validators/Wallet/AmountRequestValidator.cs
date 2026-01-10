@@ -1,7 +1,7 @@
 using FluentValidation;
 using Pruduct.Contracts.Wallet;
 
-namespace Pruduct.Business.Validators;
+namespace Pruduct.Business.Validators.Wallet;
 
 public class AmountRequestValidator : AbstractValidator<AmountRequest>
 {

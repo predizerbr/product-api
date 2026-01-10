@@ -1,18 +1,21 @@
-using Pruduct.Common.Entities;
+using Microsoft.AspNetCore.Identity;
 
-namespace Pruduct.Data.Models;
+namespace Pruduct.Data.Models.Users;
 
-public class User : Entity<Guid>
+public class User : IdentityUser<Guid>
 {
-    public string Email { get; set; } = default!;
-    public string NormalizedEmail { get; set; } = default!;
-    public string Username { get; set; } = default!;
-    public string NormalizedUsername { get; set; } = default!;
     public string Name { get; set; } = default!;
     public string NormalizedName { get; set; } = default!;
     public string? AvatarUrl { get; set; }
     public DateTimeOffset? EmailVerifiedAt { get; set; }
-    public string PasswordHash { get; set; } = default!;
     public string Status { get; set; } = "ACTIVE";
     public UserPersonalData? PersonalData { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+
+    public User()
+    {
+        CreatedAt = DateTimeOffset.UtcNow;
+        UpdatedAt = DateTimeOffset.UtcNow;
+    }
 }
