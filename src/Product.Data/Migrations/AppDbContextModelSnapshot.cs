@@ -332,33 +332,49 @@ namespace Product.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<decimal>("Amount")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("Credited")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Currency")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<DateTimeOffset?>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("OrderId")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
 
                     b.Property<string>("PaymentMethod")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("Provider")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<long?>("ProviderPaymentId")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("ProviderPaymentIdText")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("StatusDetail")
                         .HasColumnType("text");
@@ -368,77 +384,44 @@ namespace Product.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("ProviderPaymentId");
+
+                    b.HasIndex("ProviderPaymentIdText");
+
                     b.ToTable("Orders");
                 });
 
-            modelBuilder.Entity("Product.Data.Models.Payments.PaymentMethod", b =>
+            modelBuilder.Entity("Product.Data.Models.Users.PaymentsMethods.UserBankAccount", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<string>("AccountDigit")
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)");
+                        .HasColumnType("text");
 
                     b.Property<string>("AccountNumber")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
+                        .HasColumnType("text");
 
                     b.Property<string>("AccountType")
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Agency")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
+                        .HasColumnType("text");
 
                     b.Property<string>("BankCode")
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
+                        .HasColumnType("text");
 
                     b.Property<string>("BankName")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<string>("CardBrand")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<int?>("CardExpMonth")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("CardExpYear")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("CardHolderName")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<string>("CardLast4")
-                        .HasMaxLength(4)
-                        .HasColumnType("character varying(4)");
+                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsDefault")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
-                    b.Property<string>("MpCardId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("MpCustomerId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("PixKey")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("integer");
+                        .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -448,13 +431,95 @@ namespace Product.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PixKey");
+                    b.HasIndex("UserId");
+
+                    b.ToTable("UserBankAccounts");
+                });
+
+            modelBuilder.Entity("Product.Data.Models.Users.PaymentsMethods.UserCard", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CardBrand")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("CardExpMonth")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("CardExpYear")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CardHolderDocumentLast4")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CardHolderDocumentNumber")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CardHolderDocumentType")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CardHolderName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CardLast4")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MpCardId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MpCustomerId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MpPaymentMethodId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
 
                     b.HasIndex("UserId");
 
-                    b.HasIndex("UserId", "CreatedAt");
+                    b.ToTable("UserCards");
+                });
 
-                    b.ToTable("PaymentMethods");
+            modelBuilder.Entity("Product.Data.Models.Users.PaymentsMethods.UserPixKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PixKey")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("UserPixKeys");
                 });
 
             modelBuilder.Entity("Product.Data.Models.Users.Role", b =>
@@ -718,8 +783,9 @@ namespace Product.Data.Migrations
                     b.Property<Guid>("AccountId")
                         .HasColumnType("uuid");
 
-                    b.Property<long>("Amount")
-                        .HasColumnType("bigint");
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -760,8 +826,9 @@ namespace Product.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<long>("Amount")
-                        .HasColumnType("bigint");
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -815,8 +882,9 @@ namespace Product.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<long>("Amount")
-                        .HasColumnType("bigint");
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
 
                     b.Property<DateTimeOffset?>("ApprovedAt")
                         .HasColumnType("timestamp with time zone");
@@ -991,7 +1059,29 @@ namespace Product.Data.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Product.Data.Models.Payments.PaymentMethod", b =>
+            modelBuilder.Entity("Product.Data.Models.Users.PaymentsMethods.UserBankAccount", b =>
+                {
+                    b.HasOne("Product.Data.Models.Users.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Product.Data.Models.Users.PaymentsMethods.UserCard", b =>
+                {
+                    b.HasOne("Product.Data.Models.Users.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Product.Data.Models.Users.PaymentsMethods.UserPixKey", b =>
                 {
                     b.HasOne("Product.Data.Models.Users.User", "User")
                         .WithMany()

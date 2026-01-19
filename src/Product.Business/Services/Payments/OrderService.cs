@@ -1,17 +1,16 @@
-using Microsoft.EntityFrameworkCore;
 using Product.Business.Interfaces.Payments;
-using Product.Data.Database.Contexts;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Orders;
 
 namespace Product.Business.Services.Payments;
 
 public class OrderService : IOrderService
 {
-    private readonly AppDbContext _db;
+    private readonly IOrderRepository _orderRepository;
 
-    public OrderService(AppDbContext db)
+    public OrderService(IOrderRepository orderRepository)
     {
-        _db = db;
+        _orderRepository = orderRepository;
     }
 
     public async Task<Order?> GetByExternalIdAsync(
@@ -19,7 +18,7 @@ public class OrderService : IOrderService
         CancellationToken ct = default
     )
     {
-        return await _db.Orders.FirstOrDefaultAsync(o => o.OrderId == externalOrderId, ct);
+        return await _orderRepository.GetByExternalIdAsync(externalOrderId, ct);
     }
 
     public async Task<Order> CreateOrUpdateAsync(
@@ -28,13 +27,15 @@ public class OrderService : IOrderService
         string currency,
         string provider,
         long? providerPaymentId,
+        string? providerPaymentIdText,
         string status,
         string? statusDetail,
         string paymentMethod,
+        DateTimeOffset? expiresAt = null,
         CancellationToken ct = default
     )
     {
-        var existing = await GetByExternalIdAsync(externalOrderId, ct);
+        var existing = await _orderRepository.GetByExternalIdAsync(externalOrderId, ct);
         if (existing is null)
         {
             var ord = new Order
@@ -44,12 +45,14 @@ public class OrderService : IOrderService
                 Currency = currency,
                 Provider = provider,
                 ProviderPaymentId = providerPaymentId,
+                ProviderPaymentIdText = providerPaymentIdText,
                 Status = status,
                 StatusDetail = statusDetail,
                 PaymentMethod = paymentMethod,
+                ExpiresAtUtc = expiresAt?.ToUniversalTime(),
+                Credited = false,
             };
-            _db.Orders.Add(ord);
-            await _db.SaveChangesAsync(ct);
+            await _orderRepository.AddAsync(ord, ct);
             return ord;
         }
 
@@ -61,12 +64,16 @@ public class OrderService : IOrderService
         existing.Currency = currency;
         existing.Provider = provider;
         existing.ProviderPaymentId = providerPaymentId ?? existing.ProviderPaymentId;
+        existing.ProviderPaymentIdText = providerPaymentIdText ?? existing.ProviderPaymentIdText;
+        existing.ExpiresAtUtc = expiresAt is not null
+            ? expiresAt.Value.ToUniversalTime()
+            : existing.ExpiresAtUtc;
         existing.Status = status;
         existing.StatusDetail = statusDetail ?? existing.StatusDetail;
         existing.PaymentMethod = paymentMethod;
         existing.UpdatedAt = DateTimeOffset.UtcNow;
 
-        await _db.SaveChangesAsync(ct);
+        await _orderRepository.UpdateAsync(existing, ct);
         return existing;
     }
 
@@ -75,10 +82,11 @@ public class OrderService : IOrderService
         string status,
         string? statusDetail,
         long? providerPaymentId,
+        string? providerPaymentIdText = null,
         CancellationToken ct = default
     )
     {
-        var existing = await GetByExternalIdAsync(externalOrderId, ct);
+        var existing = await _orderRepository.GetByExternalIdAsync(externalOrderId, ct);
         if (existing is null)
             return null;
 
@@ -89,9 +97,11 @@ public class OrderService : IOrderService
         existing.StatusDetail = statusDetail ?? existing.StatusDetail;
         if (providerPaymentId is not null)
             existing.ProviderPaymentId = providerPaymentId;
+        if (!string.IsNullOrWhiteSpace(providerPaymentIdText))
+            existing.ProviderPaymentIdText = providerPaymentIdText;
         existing.UpdatedAt = DateTimeOffset.UtcNow;
 
-        await _db.SaveChangesAsync(ct);
+        await _orderRepository.UpdateAsync(existing, ct);
         return existing;
     }
 
@@ -99,13 +109,11 @@ public class OrderService : IOrderService
         long providerPaymentId,
         string status,
         string? statusDetail,
+        DateTimeOffset? expiresAt = null,
         CancellationToken ct = default
     )
     {
-        var existing = await _db.Orders.FirstOrDefaultAsync(
-            o => o.ProviderPaymentId == providerPaymentId,
-            ct
-        );
+        var existing = await _orderRepository.GetByProviderPaymentIdAsync(providerPaymentId, ct);
         if (existing is null)
             return null;
 
@@ -114,9 +122,19 @@ public class OrderService : IOrderService
 
         existing.Status = status;
         existing.StatusDetail = statusDetail ?? existing.StatusDetail;
+        if (expiresAt is not null)
+            existing.ExpiresAtUtc = expiresAt.Value.ToUniversalTime();
         existing.UpdatedAt = DateTimeOffset.UtcNow;
 
-        await _db.SaveChangesAsync(ct);
+        await _orderRepository.UpdateAsync(existing, ct);
         return existing;
+    }
+
+    public async Task<Order?> GetByProviderPaymentIdAsync(
+        long providerPaymentId,
+        CancellationToken ct = default
+    )
+    {
+        return await _orderRepository.GetByProviderPaymentIdAsync(providerPaymentId, ct);
     }
 }

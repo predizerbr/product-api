@@ -12,9 +12,11 @@ public interface IOrderService
         string currency,
         string provider,
         long? providerPaymentId,
+        string? providerPaymentIdText,
         string status,
         string? statusDetail,
         string paymentMethod,
+        DateTimeOffset? expiresAt = null,
         CancellationToken ct = default
     );
 
@@ -23,6 +25,7 @@ public interface IOrderService
         string status,
         string? statusDetail,
         long? providerPaymentId,
+        string? providerPaymentIdText = null,
         CancellationToken ct = default
     );
 
@@ -30,6 +33,12 @@ public interface IOrderService
         long providerPaymentId,
         string status,
         string? statusDetail,
+        DateTimeOffset? expiresAt = null,
+        CancellationToken ct = default
+    );
+
+    Task<Order?> GetByProviderPaymentIdAsync(
+        long providerPaymentId,
         CancellationToken ct = default
     );
 }

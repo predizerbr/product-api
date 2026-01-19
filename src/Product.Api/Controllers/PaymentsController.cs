@@ -1,9 +1,9 @@
-﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Product.Api.Contracts;
+using Product.Api.Extensions;
 using Product.Business.Interfaces.Payments;
-using Product.Contracts.Payments;
+using Product.Contracts.Users.PaymentsMethods;
+using Product.Contracts.Users.PaymentsMethods.Card;
 
 namespace Product.Api.Controllers;
 
@@ -13,27 +13,22 @@ namespace Product.Api.Controllers;
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentMethodService _paymentMethodService;
+    private readonly IMercadoPagoService _mercadoPagoService;
 
-    public PaymentsController(IPaymentMethodService paymentMethodService)
+    public PaymentsController(
+        IPaymentMethodService paymentMethodService,
+        IMercadoPagoService mercadoPagoService
+    )
     {
         _paymentMethodService = paymentMethodService;
+        _mercadoPagoService = mercadoPagoService;
     }
 
     [HttpGet("methods")]
     public async Task<IActionResult> GetMethods(CancellationToken ct)
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _paymentMethodService.GetMethodsAsync(userId, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<PaymentMethodListResponse>(result.Data!));
+        var result = await _paymentMethodService.GetMethodsApiAsync(User, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("methods")]
@@ -42,52 +37,86 @@ public class PaymentsController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
+        if (IsCardTokenRequest(request))
         {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _paymentMethodService.CreateMethodAsync(userId, request, ct);
-        if (!result.Success)
-        {
-            var status = result.Error switch
+            var deviceId = Request.Headers["X-meli-session-id"].ToString();
+            if (string.IsNullOrWhiteSpace(deviceId))
+                deviceId = request.DeviceId ?? string.Empty;
+            var saveReq = new SaveCardRequest
             {
-                "invalid_payment_type" => StatusCodes.Status400BadRequest,
-                "pix_key_required" => StatusCodes.Status400BadRequest,
-                "card_required" => StatusCodes.Status400BadRequest,
-                "bank_account_required" => StatusCodes.Status400BadRequest,
-                _ => StatusCodes.Status400BadRequest,
+                Payer = request.Payer!,
+                Token = request.Token!,
+                PaymentMethodId = request.PaymentMethodId,
+                IssuerId = request.IssuerId,
+                DeviceId = request.DeviceId,
+                IsDefault = request.IsDefault,
             };
-            return Problem(statusCode: status, title: result.Error);
+
+            var mpResult = await _mercadoPagoService.SaveCardAsync(saveReq, deviceId, ct);
+            if (mpResult.StatusCode >= StatusCodes.Status400BadRequest)
+            {
+                return this.ToActionResult(mpResult);
+            }
+
+            if (mpResult.Data is not SaveCardResponse saved)
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status502BadGateway,
+                    title: "invalid_mp_response"
+                );
+            }
+
+            var cardHolderName = saved.CardHolderName ?? request.Payer?.CardholderName;
+            if (string.IsNullOrWhiteSpace(cardHolderName))
+            {
+                cardHolderName = "TITULAR";
+            }
+
+            var paymentMethodId =
+                saved.MpPaymentMethodId
+                ?? saved.CardBrand
+                ?? request.PaymentMethodId
+                ?? string.Empty;
+
+            var createRequest = new CreatePaymentMethodRequest
+            {
+                Type = "CARD",
+                IsDefault = request.IsDefault,
+                CardBrand = saved.CardBrand ?? paymentMethodId,
+                CardLast4 = saved.CardLast4,
+                CardExpMonth = saved.CardExpMonth,
+                CardExpYear = saved.CardExpYear,
+                CardHolderName = cardHolderName,
+                MpCustomerId = saved.MpCustomerId,
+                MpCardId = saved.MpCardId,
+                MpPaymentMethodId = paymentMethodId,
+                HolderIdentification = request.HolderIdentification,
+            };
+
+            var createResult = await _paymentMethodService.CreateMethodApiAsync(
+                User,
+                createRequest,
+                ct
+            );
+            return this.ToActionResult(createResult);
         }
 
-        return Ok(new ResponseEnvelope<PaymentMethodResponse>(result.Data!));
+        var result = await _paymentMethodService.CreateMethodApiAsync(User, request, ct);
+        return this.ToActionResult(result);
+    }
+
+    private static bool IsCardTokenRequest(CreatePaymentMethodRequest request)
+    {
+        return string.Equals(request.Type, "CARD", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(request.Token)
+            && request.Payer is not null
+            && !string.IsNullOrWhiteSpace(request.Payer.Email);
     }
 
     [HttpDelete("methods/{methodId:guid}")]
     public async Task<IActionResult> DeleteMethod(Guid methodId, CancellationToken ct)
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _paymentMethodService.DeleteMethodAsync(userId, methodId, ct);
-        if (!result.Success)
-        {
-            var status =
-                result.Error == "payment_method_not_found"
-                    ? StatusCodes.Status404NotFound
-                    : StatusCodes.Status400BadRequest;
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<bool>(true));
-    }
-
-    private bool TryGetUserId(out Guid userId)
-    {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return Guid.TryParse(sub, out userId);
+        var result = await _paymentMethodService.DeleteMethodApiAsync(User, methodId, ct);
+        return this.ToActionResult(result);
     }
 }

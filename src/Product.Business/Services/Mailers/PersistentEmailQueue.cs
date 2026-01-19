@@ -1,28 +1,27 @@
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Product.Business.Interfaces.Email;
-using Product.Data.Database.Contexts;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Emails;
 
 namespace Product.Business.Services.Mailers;
 
 public class PersistentEmailQueue : IEmailQueue
 {
-    private const int MaxErrorLength = 2048;
-    private const int MaxAttempts = 8;
-
-    private readonly AppDbContext _db;
+    private readonly IEmailQueueRepository _emailQueueRepository;
     private readonly ILogger<PersistentEmailQueue> _logger;
 
-    public PersistentEmailQueue(AppDbContext db, ILogger<PersistentEmailQueue> logger)
+    public PersistentEmailQueue(
+        IEmailQueueRepository emailQueueRepository,
+        ILogger<PersistentEmailQueue> logger
+    )
     {
-        _db = db;
+        _emailQueueRepository = emailQueueRepository;
         _logger = logger;
     }
 
     public async Task EnqueueAsync(EmailMessage message, CancellationToken ct = default)
     {
-        _db.QueuedEmails.Add(
+        await _emailQueueRepository.AddAsync(
             new QueuedEmail
             {
                 ToEmail = message.ToEmail,
@@ -31,10 +30,9 @@ public class PersistentEmailQueue : IEmailQueue
                 HtmlBody = message.HtmlBody,
                 TextBody = message.TextBody,
                 AttemptCount = 0,
-            }
+            },
+            ct
         );
-
-        await _db.SaveChangesAsync(ct);
         _logger.LogInformation("Queued email to {Email}", message.ToEmail);
     }
 
@@ -43,18 +41,12 @@ public class PersistentEmailQueue : IEmailQueue
         CancellationToken ct = default
     )
     {
-        return await _db
-            .QueuedEmails.Where(x => x.SentAt == null && x.AttemptCount < MaxAttempts)
-            .OrderBy(x => x.CreatedAt)
-            .Take(maxItems)
-            .ToListAsync(ct);
+        return await _emailQueueRepository.GetPendingAsync(maxItems, ct);
     }
 
     public async Task MarkSentAsync(QueuedEmail email, CancellationToken ct = default)
     {
-        email.SentAt = DateTimeOffset.UtcNow;
-        email.UpdatedAt = DateTimeOffset.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        await _emailQueueRepository.MarkSentAsync(email, ct);
     }
 
     public async Task MarkFailedAsync(
@@ -63,19 +55,6 @@ public class PersistentEmailQueue : IEmailQueue
         CancellationToken ct = default
     )
     {
-        email.AttemptCount += 1;
-        email.UpdatedAt = DateTimeOffset.UtcNow;
-        email.LastError = TrimError(error);
-        await _db.SaveChangesAsync(ct);
-    }
-
-    private static string? TrimError(string? error)
-    {
-        if (string.IsNullOrWhiteSpace(error))
-        {
-            return error;
-        }
-
-        return error.Length <= MaxErrorLength ? error : error[..MaxErrorLength];
+        await _emailQueueRepository.MarkFailedAsync(email, error, ct);
     }
 }

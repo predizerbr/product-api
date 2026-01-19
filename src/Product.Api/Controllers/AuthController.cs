@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Product.Api.Extensions;
 using Product.Business.Interfaces.Auth;
 using Product.Contracts.Auth;
 
@@ -20,8 +21,8 @@ public class AuthController : ControllerBase
         CancellationToken cancellationToken = default
     )
     {
-        await _authService.SignUpAsync(request, cancellationToken);
-        return NoContent();
+        var result = await _authService.SignUpApiAsync(request, cancellationToken);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("sign-in")]
@@ -32,24 +33,24 @@ public class AuthController : ControllerBase
         [FromQuery] bool? useSessionCookies
     )
     {
-        await _authService.SignInAsync(request, useCookies, useSessionCookies);
-        return Ok();
+        var result = await _authService.SignInApiAsync(request, useCookies, useSessionCookies);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("sign-out")]
     [Authorize]
     public async Task<IActionResult> SignOutUser()
     {
-        await _authService.SignOutAsync();
-        return NoContent();
+        var result = await _authService.SignOutApiAsync();
+        return this.ToActionResult(result);
     }
 
     [HttpPost("refresh")]
     [AllowAnonymous]
     public async Task<IActionResult> Refresh([FromBody] RefreshRequest request)
     {
-        await _authService.RefreshAsync(request);
-        return Ok();
+        var result = await _authService.RefreshApiAsync(request);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("confirmEmail")]
@@ -60,8 +61,8 @@ public class AuthController : ControllerBase
         [FromQuery] string? newEmail
     )
     {
-        await _authService.ConfirmEmailAsync(userId, code, newEmail);
-        return Ok();
+        var result = await _authService.ConfirmEmailApiAsync(userId, code, newEmail);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("resendConfirmationEmail")]
@@ -71,8 +72,8 @@ public class AuthController : ControllerBase
         CancellationToken ct
     )
     {
-        await _authService.ResendConfirmationEmailAsync(request, ct);
-        return Ok();
+        var result = await _authService.ResendConfirmationEmailApiAsync(request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("resend-reset-code")]
@@ -82,9 +83,8 @@ public class AuthController : ControllerBase
         CancellationToken ct
     )
     {
-        // Reuse forgot-password flow to resend the password reset code.
-        await _authService.ForgotPasswordAsync(request, ct);
-        return Ok();
+        var result = await _authService.ResendResetCodeApiAsync(request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("sign-in/google")]
@@ -95,18 +95,12 @@ public class AuthController : ControllerBase
         [FromQuery] bool? useSessionCookies
     )
     {
-        try
-        {
-            await _authService.GoogleLoginAsync(request, useCookies, useSessionCookies);
-            return Ok();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return Problem(
-                statusCode: StatusCodes.Status401Unauthorized,
-                title: "invalid_google_token"
-            );
-        }
+        var result = await _authService.GoogleSignInApiAsync(
+            request,
+            useCookies,
+            useSessionCookies
+        );
+        return this.ToActionResult(result);
     }
 
     [HttpPost("forgotPassword")]
@@ -116,8 +110,8 @@ public class AuthController : ControllerBase
         CancellationToken ct
     )
     {
-        await _authService.ForgotPasswordAsync(request, ct);
-        return Ok();
+        var result = await _authService.ForgotPasswordApiAsync(request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("resetPassword")]
@@ -127,42 +121,24 @@ public class AuthController : ControllerBase
         CancellationToken ct
     )
     {
-        await _authService.ResetPasswordAsync(request, ct);
-        return Ok();
+        var result = await _authService.ResetPasswordApiAsync(request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("verify-reset-code")]
     [AllowAnonymous]
     public async Task<IActionResult> VerifyResetCode([FromBody] VerifyResetCodeRequest request)
     {
-        try
-        {
-            await _authService.VerifyResetCodeAsync(request);
-            return Ok();
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(new { title = "user_not_found" });
-        }
-        catch (ArgumentException ex) when (ex.Message == "invalid_reset_token")
-        {
-            return Problem(
-                statusCode: StatusCodes.Status400BadRequest,
-                title: "invalid_reset_token"
-            );
-        }
-        catch (ArgumentException ex)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
-        }
+        var result = await _authService.VerifyResetCodeApiAsync(request);
+        return this.ToActionResult(result);
     }
 
     [HttpGet("manage/info")]
     [Authorize]
     public async Task<IActionResult> GetInfo()
     {
-        var info = await _authService.GetInfoAsync(User);
-        return Ok(info);
+        var result = await _authService.GetInfoApiAsync(User);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("manage/info")]
@@ -172,44 +148,32 @@ public class AuthController : ControllerBase
         CancellationToken ct
     )
     {
-        try
-        {
-            var info = await _authService.UpdateInfoAsync(User, request, ct);
-            return Ok(info);
-        }
-        catch (InvalidOperationException ex)
-            when (ex.Message == "external_account_cannot_change_password")
-        {
-            return Problem(
-                statusCode: StatusCodes.Status400BadRequest,
-                title: "external_account_cannot_change_password"
-            );
-        }
+        var result = await _authService.UpdateInfoApiAsync(User, request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpGet("manage/2fa")]
     [Authorize]
     public async Task<IActionResult> GetTwoFactor()
     {
-        var resp = await _authService.GetTwoFactorAsync(User);
-        return Ok(resp);
+        var result = await _authService.GetTwoFactorApiAsync(User);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("manage/2fa")]
     [Authorize]
     public async Task<IActionResult> UpdateTwoFactor([FromBody] TwoFactorRequest request)
     {
-        var resp = await _authService.UpdateTwoFactorAsync(User, request);
-        return Ok(resp);
+        var result = await _authService.UpdateTwoFactorApiAsync(User, request);
+        return this.ToActionResult(result);
     }
 
     [HttpGet("manage/external-login")]
     [Authorize]
     public async Task<IActionResult> HasExternalLogin()
     {
-        var providers = await _authService.GetExternalLoginProvidersAsync(User);
-        var has = providers != null && providers.Any();
-        return Ok(new { hasExternalLogin = has, providers });
+        var result = await _authService.HasExternalLoginApiAsync(User);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("manage/password")]
@@ -219,30 +183,7 @@ public class AuthController : ControllerBase
         CancellationToken ct
     )
     {
-        try
-        {
-            await _authService.ChangePasswordAsync(User, request, ct);
-            return Ok();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-        catch (ArgumentException ex) when (ex.Message == "password_mismatch")
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "password_mismatch");
-        }
-        catch (InvalidOperationException ex)
-            when (ex.Message == "external_account_cannot_change_password")
-        {
-            return Problem(
-                statusCode: StatusCodes.Status400BadRequest,
-                title: "external_account_cannot_change_password"
-            );
-        }
-        catch (ArgumentException ex)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
-        }
+        var result = await _authService.ChangePasswordApiAsync(User, request, ct);
+        return this.ToActionResult(result);
     }
 }

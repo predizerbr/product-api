@@ -1,7 +1,6 @@
-﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Product.Api.Contracts;
+using Product.Api.Extensions;
 using Product.Business.Interfaces.Wallet;
 using Product.Contracts.Wallet;
 
@@ -22,18 +21,8 @@ public class WalletController : ControllerBase
     [HttpGet("balances")]
     public async Task<IActionResult> GetBalances(CancellationToken ct)
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _walletService.GetBalancesAsync(userId, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<IReadOnlyCollection<WalletBalanceResponse>>(result.Data!));
+        var result = await _walletService.GetBalancesApiAsync(User, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpGet("ledger")]
@@ -43,22 +32,8 @@ public class WalletController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _walletService.GetLedgerAsync(userId, cursor, limit, ct);
-        if (!result.Success)
-        {
-            var status =
-                result.Error == "invalid_cursor"
-                    ? StatusCodes.Status400BadRequest
-                    : StatusCodes.Status404NotFound;
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<LedgerListResponse>(result.Data!));
+        var result = await _walletService.GetLedgerApiAsync(User, cursor, limit, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("deposits/intent")]
@@ -67,31 +42,13 @@ public class WalletController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        if (!TryGetIdempotencyKey(out var idempotencyKey))
-        {
-            return Problem(
-                statusCode: StatusCodes.Status400BadRequest,
-                title: "idempotency_required"
-            );
-        }
-
-        var result = await _walletService.CreateDepositIntentAsync(
-            userId,
+        var result = await _walletService.CreateDepositIntentApiAsync(
+            User,
+            Request.Headers,
             request,
-            idempotencyKey,
             ct
         );
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<CreateDepositResponse>(result.Data!));
+        return this.ToActionResult(result);
     }
 
     [HttpGet("deposits")]
@@ -101,22 +58,8 @@ public class WalletController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _walletService.GetDepositsAsync(userId, cursor, limit, ct);
-        if (!result.Success)
-        {
-            var status =
-                result.Error == "invalid_cursor"
-                    ? StatusCodes.Status400BadRequest
-                    : StatusCodes.Status404NotFound;
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<DepositListResponse>(result.Data!));
+        var result = await _walletService.GetDepositsApiAsync(User, cursor, limit, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("withdrawals")]
@@ -125,35 +68,13 @@ public class WalletController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        if (!TryGetIdempotencyKey(out var idempotencyKey))
-        {
-            return Problem(
-                statusCode: StatusCodes.Status400BadRequest,
-                title: "idempotency_required"
-            );
-        }
-
-        var result = await _walletService.CreateWithdrawalAsync(
-            userId,
+        var result = await _walletService.CreateWithdrawalApiAsync(
+            User,
+            Request.Headers,
             request,
-            idempotencyKey,
             ct
         );
-        if (!result.Success)
-        {
-            var status =
-                result.Error == "insufficient_funds"
-                    ? StatusCodes.Status400BadRequest
-                    : StatusCodes.Status400BadRequest;
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<WithdrawalResponse>(result.Data!));
+        return this.ToActionResult(result);
     }
 
     [HttpGet("withdrawals")]
@@ -163,22 +84,8 @@ public class WalletController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _walletService.GetWithdrawalsAsync(userId, cursor, limit, ct);
-        if (!result.Success)
-        {
-            var status =
-                result.Error == "invalid_cursor"
-                    ? StatusCodes.Status400BadRequest
-                    : StatusCodes.Status404NotFound;
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<WithdrawalListResponse>(result.Data!));
+        var result = await _walletService.GetWithdrawalsApiAsync(User, cursor, limit, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPost("withdrawals/{withdrawalId:guid}/approve")]
@@ -189,29 +96,13 @@ public class WalletController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var adminUserId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _walletService.ApproveWithdrawalAsync(
+        var result = await _walletService.ApproveWithdrawalApiAsync(
+            User,
             withdrawalId,
-            adminUserId,
             request,
             ct
         );
-        if (!result.Success)
-        {
-            var status = result.Error switch
-            {
-                "withdrawal_not_found" => StatusCodes.Status404NotFound,
-                "invalid_status" => StatusCodes.Status400BadRequest,
-                _ => StatusCodes.Status400BadRequest,
-            };
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<WithdrawalResponse>(result.Data!));
+        return this.ToActionResult(result);
     }
 
     [HttpPost("withdrawals/{withdrawalId:guid}/reject")]
@@ -222,53 +113,7 @@ public class WalletController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var adminUserId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _walletService.RejectWithdrawalAsync(
-            withdrawalId,
-            adminUserId,
-            request,
-            ct
-        );
-        if (!result.Success)
-        {
-            var status = result.Error switch
-            {
-                "withdrawal_not_found" => StatusCodes.Status404NotFound,
-                "invalid_status" => StatusCodes.Status400BadRequest,
-                "account_not_found" => StatusCodes.Status404NotFound,
-                _ => StatusCodes.Status400BadRequest,
-            };
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<WithdrawalResponse>(result.Data!));
-    }
-
-    private bool TryGetUserId(out Guid userId)
-    {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return Guid.TryParse(sub, out userId);
-    }
-
-    private bool TryGetIdempotencyKey(out string idempotencyKey)
-    {
-        idempotencyKey = string.Empty;
-        if (!Request.Headers.TryGetValue("Idempotency-Key", out var values))
-        {
-            return false;
-        }
-
-        var value = values.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        idempotencyKey = value;
-        return true;
+        var result = await _walletService.RejectWithdrawalApiAsync(User, withdrawalId, request, ct);
+        return this.ToActionResult(result);
     }
 }

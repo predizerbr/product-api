@@ -1,26 +1,174 @@
 ﻿using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Product.Business.Interfaces.Audit;
 using Product.Business.Interfaces.Auth;
 using Product.Business.Interfaces.Results;
 using Product.Business.Interfaces.Users;
 using Product.Contracts.Users;
-using Product.Data.Database.Contexts;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Users;
 
 namespace Product.Business.Services.Users;
 
 public class UserService : IUserService
 {
-    private readonly AppDbContext _db;
+    private readonly IUserRepository _userRepository;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IAuditService _auditService;
 
-    public UserService(AppDbContext db, IPasswordHasher passwordHasher, IAuditService auditService)
+    public UserService(
+        IUserRepository userRepository,
+        IPasswordHasher passwordHasher,
+        IAuditService auditService
+    )
     {
-        _db = db;
+        _userRepository = userRepository;
         _passwordHasher = passwordHasher;
         _auditService = auditService;
+    }
+
+    public async Task<ApiResult> GetMeApiAsync(
+        ClaimsPrincipal principal,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await GetMeAsync(userId, ct);
+        if (!result.Success)
+        {
+            return ApiResult.Problem(StatusCodes.Status404NotFound, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> UpdateProfileApiAsync(
+        ClaimsPrincipal principal,
+        UpdateProfileRequest request,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await UpdateProfileAsync(userId, request, ct);
+        if (!result.Success)
+        {
+            var status = result.Error switch
+            {
+                "email_taken" => StatusCodes.Status400BadRequest,
+                "username_taken" => StatusCodes.Status400BadRequest,
+                "cpf_taken" => StatusCodes.Status400BadRequest,
+                "personal_data_required" => StatusCodes.Status400BadRequest,
+                "address_required" => StatusCodes.Status400BadRequest,
+                "user_not_found" => StatusCodes.Status404NotFound,
+                _ => StatusCodes.Status400BadRequest,
+            };
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> UpdateAddressApiAsync(
+        ClaimsPrincipal principal,
+        UpdateAddressRequest request,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await UpdateAddressAsync(userId, request, ct);
+        if (!result.Success)
+        {
+            var status = result.Error switch
+            {
+                "personal_data_required" => StatusCodes.Status400BadRequest,
+                "address_required" => StatusCodes.Status400BadRequest,
+                "user_not_found" => StatusCodes.Status404NotFound,
+                _ => StatusCodes.Status400BadRequest,
+            };
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> UpdateAvatarApiAsync(
+        ClaimsPrincipal principal,
+        UpdateAvatarRequest request,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await UpdateAvatarAsync(userId, request, ct);
+        if (!result.Success)
+        {
+            var status =
+                result.Error == "user_not_found"
+                    ? StatusCodes.Status404NotFound
+                    : StatusCodes.Status400BadRequest;
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> GetSessionsApiAsync(
+        ClaimsPrincipal principal,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await GetSessionsAsync(userId, ct);
+        if (!result.Success)
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> RevokeSessionApiAsync(
+        ClaimsPrincipal principal,
+        Guid sessionId,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await RevokeSessionAsync(userId, sessionId, ct);
+        if (!result.Success)
+        {
+            var status =
+                result.Error == "session_not_found"
+                    ? StatusCodes.Status404NotFound
+                    : StatusCodes.Status400BadRequest;
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(true, envelope: true);
     }
 
     public async Task<ServiceResult<UserView>> GetMeAsync(
@@ -28,10 +176,7 @@ public class UserService : IUserService
         CancellationToken ct = default
     )
     {
-        var user = await _db
-            .Users.Include(u => u.PersonalData)
-            .ThenInclude(pd => pd!.Address)
-            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+        var user = await _userRepository.GetUserWithPersonalDataAsync(userId, ct);
         if (user is null)
         {
             return ServiceResult<UserView>.Fail("user_not_found");
@@ -47,10 +192,7 @@ public class UserService : IUserService
         CancellationToken ct = default
     )
     {
-        var user = await _db
-            .Users.Include(u => u.PersonalData)
-            .ThenInclude(pd => pd!.Address)
-            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+        var user = await _userRepository.GetUserWithPersonalDataAsync(userId, ct);
         if (user is null)
         {
             return ServiceResult<UserView>.Fail("user_not_found");
@@ -59,10 +201,7 @@ public class UserService : IUserService
         if (request.Email is not null)
         {
             var normalizedEmail = NormalizeEmail(request.Email);
-            var emailTaken = await _db.Users.AnyAsync(
-                u => u.Id != userId && u.NormalizedEmail == normalizedEmail,
-                ct
-            );
+            var emailTaken = await _userRepository.IsEmailTakenAsync(userId, normalizedEmail, ct);
             if (emailTaken)
             {
                 return ServiceResult<UserView>.Fail("email_taken");
@@ -75,8 +214,9 @@ public class UserService : IUserService
         if (request.Username is not null)
         {
             var normalizedUsername = NormalizeUsername(request.Username);
-            var usernameTaken = await _db.Users.AnyAsync(
-                u => u.Id != userId && u.NormalizedUserName == normalizedUsername,
+            var usernameTaken = await _userRepository.IsUsernameTakenAsync(
+                userId,
+                normalizedUsername,
                 ct
             );
             if (usernameTaken)
@@ -109,7 +249,7 @@ public class UserService : IUserService
             return ServiceResult<UserView>.Fail(ex.Message);
         }
 
-        await _db.SaveChangesAsync(ct);
+        await _userRepository.UpdateUserAsync(user, ct);
 
         await _auditService.LogAsync(user.Id, "USER_UPDATE", "User", user.Id, ct: ct);
         if (request.Cpf is not null || request.PhoneNumber is not null)
@@ -133,10 +273,7 @@ public class UserService : IUserService
         CancellationToken ct = default
     )
     {
-        var user = await _db
-            .Users.Include(u => u.PersonalData)
-            .ThenInclude(pd => pd!.Address)
-            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+        var user = await _userRepository.GetUserWithPersonalDataAsync(userId, ct);
         if (user is null)
         {
             return ServiceResult<UserView>.Fail("user_not_found");
@@ -239,7 +376,7 @@ public class UserService : IUserService
             }
         }
 
-        await _db.SaveChangesAsync(ct);
+        await _userRepository.UpdateUserAsync(user, ct);
 
         await _auditService.LogAsync(
             user.Id,
@@ -259,17 +396,14 @@ public class UserService : IUserService
         CancellationToken ct = default
     )
     {
-        var user = await _db
-            .Users.Include(u => u.PersonalData)
-            .ThenInclude(pd => pd!.Address)
-            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+        var user = await _userRepository.GetUserWithPersonalDataAsync(userId, ct);
         if (user is null)
         {
             return ServiceResult<UserView>.Fail("user_not_found");
         }
 
         user.AvatarUrl = request.AvatarUrl;
-        await _db.SaveChangesAsync(ct);
+        await _userRepository.UpdateUserAsync(user, ct);
 
         await _auditService.LogAsync(user.Id, "USER_AVATAR_UPDATE", "User", user.Id, ct: ct);
 
@@ -282,9 +416,8 @@ public class UserService : IUserService
         CancellationToken ct = default
     )
     {
-        var sessions = await _db
-            .RefreshTokens.Where(x => x.UserId == userId)
-            .OrderByDescending(x => x.CreatedAt)
+        var sessions = await _userRepository.GetRefreshTokensAsync(userId, ct);
+        var response = sessions
             .Select(x => new UserSessionResponse
             {
                 Id = x.Id,
@@ -294,9 +427,9 @@ public class UserService : IUserService
                 RevokedAt = x.RevokedAt,
                 IsActive = x.RevokedAt == null && x.ExpiresAt > DateTimeOffset.UtcNow,
             })
-            .ToListAsync(ct);
+            .ToList();
 
-        return ServiceResult<IReadOnlyCollection<UserSessionResponse>>.Ok(sessions);
+        return ServiceResult<IReadOnlyCollection<UserSessionResponse>>.Ok(response);
     }
 
     public async Task<ServiceResult<bool>> RevokeSessionAsync(
@@ -305,10 +438,7 @@ public class UserService : IUserService
         CancellationToken ct = default
     )
     {
-        var session = await _db.RefreshTokens.FirstOrDefaultAsync(
-            x => x.Id == sessionId && x.UserId == userId,
-            ct
-        );
+        var session = await _userRepository.GetRefreshTokenAsync(userId, sessionId, ct);
         if (session is null)
         {
             return ServiceResult<bool>.Fail("session_not_found");
@@ -317,7 +447,7 @@ public class UserService : IUserService
         if (session.RevokedAt is null)
         {
             session.RevokedAt = DateTimeOffset.UtcNow;
-            await _db.SaveChangesAsync(ct);
+            await _userRepository.UpdateRefreshTokenAsync(session, ct);
         }
 
         await _auditService.LogAsync(userId, "SESSION_REVOKE", "RefreshToken", session.Id, ct: ct);
@@ -340,10 +470,7 @@ public class UserService : IUserService
         {
             if (!string.IsNullOrWhiteSpace(request.Cpf))
             {
-                var cpfTaken = await _db.UserPersonalData.AnyAsync(
-                    x => x.UserId != user.Id && x.Cpf == request.Cpf,
-                    ct
-                );
+                var cpfTaken = await _userRepository.IsCpfTakenAsync(request.Cpf!, user.Id, ct);
                 if (cpfTaken)
                 {
                     throw new InvalidOperationException("cpf_taken");
@@ -364,10 +491,7 @@ public class UserService : IUserService
 
         if (!string.IsNullOrWhiteSpace(request.Cpf))
         {
-            var cpfTaken = await _db.UserPersonalData.AnyAsync(
-                x => x.UserId != user.Id && x.Cpf == request.Cpf,
-                ct
-            );
+            var cpfTaken = await _userRepository.IsCpfTakenAsync(request.Cpf!, user.Id, ct);
             if (cpfTaken)
             {
                 throw new InvalidOperationException("cpf_taken");
@@ -386,10 +510,7 @@ public class UserService : IUserService
 
     private async Task<UserView> BuildUserViewAsync(User user, CancellationToken ct)
     {
-        var roles = await _db
-            .UserRoles.Where(ur => ur.UserId == user.Id)
-            .Join(_db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => r.Name ?? string.Empty)
-            .ToArrayAsync(ct);
+        var roles = await _userRepository.GetUserRolesAsync(user.Id, ct);
 
         var personal = user.PersonalData;
         var address = personal?.Address;
@@ -459,5 +580,11 @@ public class UserService : IUserService
         }
 
         return new string(buffer[..idx]).Normalize(System.Text.NormalizationForm.FormC);
+    }
+
+    private static bool TryGetUserId(ClaimsPrincipal principal, out Guid userId)
+    {
+        var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        return Guid.TryParse(sub, out userId);
     }
 }

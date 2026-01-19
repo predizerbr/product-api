@@ -1,7 +1,6 @@
-﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Product.Api.Contracts;
+using Product.Api.Extensions;
 using Product.Business.Interfaces.Users;
 using Product.Contracts.Users;
 
@@ -22,18 +21,8 @@ public class UsersController : ControllerBase
     [HttpGet("me")]
     public async Task<IActionResult> GetMe(CancellationToken ct)
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _userService.GetMeAsync(userId, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status404NotFound, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<UserView>(result.Data!));
+        var result = await _userService.GetMeApiAsync(User, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPut("me")]
@@ -42,28 +31,8 @@ public class UsersController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _userService.UpdateProfileAsync(userId, request, ct);
-        if (!result.Success)
-        {
-            var status = result.Error switch
-            {
-                "email_taken" => StatusCodes.Status400BadRequest,
-                "username_taken" => StatusCodes.Status400BadRequest,
-                "cpf_taken" => StatusCodes.Status400BadRequest,
-                "personal_data_required" => StatusCodes.Status400BadRequest,
-                "address_required" => StatusCodes.Status400BadRequest,
-                "user_not_found" => StatusCodes.Status404NotFound,
-                _ => StatusCodes.Status400BadRequest,
-            };
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<UserView>(result.Data!));
+        var result = await _userService.UpdateProfileApiAsync(User, request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPut("me/address")]
@@ -72,25 +41,8 @@ public class UsersController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _userService.UpdateAddressAsync(userId, request, ct);
-        if (!result.Success)
-        {
-            var status = result.Error switch
-            {
-                "personal_data_required" => StatusCodes.Status400BadRequest,
-                "address_required" => StatusCodes.Status400BadRequest,
-                "user_not_found" => StatusCodes.Status404NotFound,
-                _ => StatusCodes.Status400BadRequest,
-            };
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<UserView>(result.Data!));
+        var result = await _userService.UpdateAddressApiAsync(User, request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpPut("me/avatar")]
@@ -99,65 +51,21 @@ public class UsersController : ControllerBase
         CancellationToken ct
     )
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _userService.UpdateAvatarAsync(userId, request, ct);
-        if (!result.Success)
-        {
-            var status =
-                result.Error == "user_not_found"
-                    ? StatusCodes.Status404NotFound
-                    : StatusCodes.Status400BadRequest;
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<UserView>(result.Data!));
+        var result = await _userService.UpdateAvatarApiAsync(User, request, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpGet("me/sessions")]
     public async Task<IActionResult> GetSessions(CancellationToken ct)
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _userService.GetSessionsAsync(userId, ct);
-        if (!result.Success)
-        {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<IReadOnlyCollection<UserSessionResponse>>(result.Data!));
+        var result = await _userService.GetSessionsApiAsync(User, ct);
+        return this.ToActionResult(result);
     }
 
     [HttpDelete("me/sessions/{sessionId:guid}")]
     public async Task<IActionResult> RevokeSession(Guid sessionId, CancellationToken ct)
     {
-        if (!TryGetUserId(out var userId))
-        {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "invalid_token");
-        }
-
-        var result = await _userService.RevokeSessionAsync(userId, sessionId, ct);
-        if (!result.Success)
-        {
-            var status =
-                result.Error == "session_not_found"
-                    ? StatusCodes.Status404NotFound
-                    : StatusCodes.Status400BadRequest;
-            return Problem(statusCode: status, title: result.Error);
-        }
-
-        return Ok(new ResponseEnvelope<bool>(true));
-    }
-
-    private bool TryGetUserId(out Guid userId)
-    {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return Guid.TryParse(sub, out userId);
+        var result = await _userService.RevokeSessionApiAsync(User, sessionId, ct);
+        return this.ToActionResult(result);
     }
 }

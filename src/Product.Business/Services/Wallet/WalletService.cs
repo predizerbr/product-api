@@ -1,9 +1,10 @@
-using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Product.Business.Interfaces.Results;
 using Product.Business.Interfaces.Wallet;
 using Product.Common.Enums;
 using Product.Contracts.Wallet;
-using Product.Data.Database.Contexts;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Wallet;
 
 namespace Product.Business.Services.Wallet;
@@ -14,11 +15,212 @@ public class WalletService : IWalletService
     private const int DefaultLimit = 50;
     private const int MaxLimit = 200;
 
-    private readonly AppDbContext _db;
+    private readonly IWalletRepository _walletRepository;
 
-    public WalletService(AppDbContext db)
+    public WalletService(IWalletRepository walletRepository)
     {
-        _db = db;
+        _walletRepository = walletRepository;
+    }
+
+    public async Task<ApiResult> GetBalancesApiAsync(
+        ClaimsPrincipal principal,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await GetBalancesAsync(userId, ct);
+        if (!result.Success)
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> GetLedgerApiAsync(
+        ClaimsPrincipal principal,
+        string? cursor,
+        int? limit,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await GetLedgerAsync(userId, cursor, limit, ct);
+        if (!result.Success)
+        {
+            var status =
+                result.Error == "invalid_cursor"
+                    ? StatusCodes.Status400BadRequest
+                    : StatusCodes.Status404NotFound;
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> CreateDepositIntentApiAsync(
+        ClaimsPrincipal principal,
+        IHeaderDictionary headers,
+        AmountRequest request,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        if (!TryGetIdempotencyKey(headers, out var idempotencyKey))
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, "idempotency_required");
+        }
+
+        var result = await CreateDepositIntentAsync(userId, request, idempotencyKey, ct);
+        if (!result.Success)
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> GetDepositsApiAsync(
+        ClaimsPrincipal principal,
+        string? cursor,
+        int? limit,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await GetDepositsAsync(userId, cursor, limit, ct);
+        if (!result.Success)
+        {
+            var status =
+                result.Error == "invalid_cursor"
+                    ? StatusCodes.Status400BadRequest
+                    : StatusCodes.Status404NotFound;
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> CreateWithdrawalApiAsync(
+        ClaimsPrincipal principal,
+        IHeaderDictionary headers,
+        AmountRequest request,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        if (!TryGetIdempotencyKey(headers, out var idempotencyKey))
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, "idempotency_required");
+        }
+
+        var result = await CreateWithdrawalAsync(userId, request, idempotencyKey, ct);
+        if (!result.Success)
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> GetWithdrawalsApiAsync(
+        ClaimsPrincipal principal,
+        string? cursor,
+        int? limit,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await GetWithdrawalsAsync(userId, cursor, limit, ct);
+        if (!result.Success)
+        {
+            var status =
+                result.Error == "invalid_cursor"
+                    ? StatusCodes.Status400BadRequest
+                    : StatusCodes.Status404NotFound;
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> ApproveWithdrawalApiAsync(
+        ClaimsPrincipal principal,
+        Guid withdrawalId,
+        WithdrawalDecisionRequest request,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var adminUserId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await ApproveWithdrawalAsync(withdrawalId, adminUserId, request, ct);
+        if (!result.Success)
+        {
+            var status = result.Error switch
+            {
+                "withdrawal_not_found" => StatusCodes.Status404NotFound,
+                "invalid_status" => StatusCodes.Status400BadRequest,
+                _ => StatusCodes.Status400BadRequest,
+            };
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
+    public async Task<ApiResult> RejectWithdrawalApiAsync(
+        ClaimsPrincipal principal,
+        Guid withdrawalId,
+        WithdrawalDecisionRequest request,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var adminUserId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await RejectWithdrawalAsync(withdrawalId, adminUserId, request, ct);
+        if (!result.Success)
+        {
+            var status = result.Error switch
+            {
+                "withdrawal_not_found" => StatusCodes.Status404NotFound,
+                "invalid_status" => StatusCodes.Status400BadRequest,
+                "account_not_found" => StatusCodes.Status404NotFound,
+                _ => StatusCodes.Status400BadRequest,
+            };
+            return ApiResult.Problem(status, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
     }
 
     public async Task<ServiceResult<bool>> ConfirmDepositAsync(
@@ -27,7 +229,7 @@ public class WalletService : IWalletService
         CancellationToken ct = default
     )
     {
-        var intent = await _db.PaymentIntents.FindAsync(new object?[] { paymentIntentId }, ct);
+        var intent = await _walletRepository.GetPaymentIntentByIdAsync(paymentIntentId, ct);
         if (intent is null)
             return ServiceResult<bool>.Fail("payment_intent_not_found");
 
@@ -40,23 +242,119 @@ public class WalletService : IWalletService
         var accounts = await EnsureAccountsAsync(intent.UserId, ct);
         var account = accounts[0];
 
-        _db.LedgerEntries.Add(
-            new LedgerEntry
-            {
-                AccountId = account.Id,
-                Type = LedgerEntryType.DEPOSIT_GATEWAY,
-                Amount = intent.Amount,
-                ReferenceType = "PaymentIntent",
-                ReferenceId = intent.Id,
-                IdempotencyKey = providerPaymentId ?? intent.IdempotencyKey,
-            }
-        );
+        var entry = new LedgerEntry
+        {
+            AccountId = account.Id,
+            Type = LedgerEntryType.DEPOSIT_GATEWAY,
+            Amount = intent.Amount,
+            ReferenceType = "PaymentIntent",
+            ReferenceId = intent.Id,
+            IdempotencyKey = providerPaymentId ?? intent.IdempotencyKey,
+        };
 
         intent.Status = PaymentIntentStatus.APPROVED;
         intent.ExternalPaymentId ??= providerPaymentId;
 
-        await _db.SaveChangesAsync(ct);
+        await _walletRepository.AddLedgerEntryAsync(entry, ct);
 
+        return ServiceResult<bool>.Ok(true);
+    }
+
+    public async Task<ServiceResult<bool>> SyncDepositStatusAsync(
+        Guid paymentIntentId,
+        string? providerStatus,
+        string? providerStatusDetail,
+        string? providerPaymentId,
+        decimal? providerAmount,
+        CancellationToken ct = default
+    )
+    {
+        var intent = await _walletRepository.GetPaymentIntentByIdAsync(paymentIntentId, ct);
+        if (intent is null)
+        {
+            return ServiceResult<bool>.Fail("payment_intent_not_found");
+        }
+
+        var amountAdjusted = false;
+        if (providerAmount is > 0)
+        {
+            if (intent.Status != PaymentIntentStatus.APPROVED)
+            {
+                if (intent.Amount != providerAmount.Value)
+                {
+                    intent.Amount = providerAmount.Value;
+                    amountAdjusted = true;
+                }
+            }
+            else
+            {
+                if (intent.Amount != providerAmount.Value)
+                {
+                    intent.Amount = providerAmount.Value;
+                    amountAdjusted = true;
+                }
+
+                var ledger = await _walletRepository.GetLedgerEntryByReferenceAsync(
+                    "PaymentIntent",
+                    intent.Id,
+                    ct
+                );
+                if (ledger is not null && ledger.Amount != providerAmount.Value)
+                {
+                    ledger.Amount = providerAmount.Value;
+                    amountAdjusted = true;
+                }
+            }
+        }
+
+        var mappedStatus = MapMpStatusToIntentStatus(providerStatus, providerStatusDetail);
+        if (mappedStatus == PaymentIntentStatus.APPROVED)
+        {
+            if (intent.Status == PaymentIntentStatus.APPROVED)
+            {
+                if (amountAdjusted)
+                    await _walletRepository.UpdatePaymentIntentAsync(intent, ct);
+                return ServiceResult<bool>.Ok(true);
+            }
+
+            return await ConfirmDepositAsync(
+                paymentIntentId,
+                providerPaymentId ?? intent.IdempotencyKey,
+                ct
+            );
+        }
+
+        if (mappedStatus is null)
+        {
+            if (
+                !string.IsNullOrWhiteSpace(providerPaymentId)
+                && string.IsNullOrWhiteSpace(intent.ExternalPaymentId)
+            )
+            {
+                intent.ExternalPaymentId = providerPaymentId;
+                amountAdjusted = true;
+            }
+
+            if (amountAdjusted)
+                await _walletRepository.UpdatePaymentIntentAsync(intent, ct);
+
+            return ServiceResult<bool>.Ok(true);
+        }
+
+        if (intent.Status == PaymentIntentStatus.APPROVED)
+        {
+            if (amountAdjusted)
+                await _walletRepository.UpdatePaymentIntentAsync(intent, ct);
+            return ServiceResult<bool>.Ok(true);
+        }
+
+        intent.Status = mappedStatus.Value;
+        if (!string.IsNullOrWhiteSpace(providerPaymentId))
+        {
+            intent.ExternalPaymentId ??= providerPaymentId;
+        }
+
+        await _walletRepository.UpdatePaymentIntentAsync(intent, ct);
         return ServiceResult<bool>.Ok(true);
     }
 
@@ -68,13 +366,7 @@ public class WalletService : IWalletService
         var accounts = await EnsureAccountsAsync(userId, ct);
         var accountIds = accounts.Select(a => a.Id).ToArray();
 
-        var balances = await _db
-            .LedgerEntries.Where(le => accountIds.Contains(le.AccountId))
-            .GroupBy(le => le.AccountId)
-            .Select(g => new { AccountId = g.Key, Balance = g.Sum(x => x.Amount) })
-            .ToListAsync(ct);
-
-        var balanceLookup = balances.ToDictionary(x => x.AccountId, x => x.Balance);
+        var balanceLookup = await _walletRepository.GetLedgerBalancesAsync(accountIds, ct);
 
         var result = accounts
             .Select(a =>
@@ -116,18 +408,12 @@ public class WalletService : IWalletService
             cursorTime = parsed;
         }
 
-        var query = _db.LedgerEntries.Where(le => accountIds.Contains(le.AccountId));
-
-        if (cursorTime.HasValue)
-        {
-            query = query.Where(le => le.CreatedAt < cursorTime.Value);
-        }
-
-        var entries = await query
-            .OrderByDescending(le => le.CreatedAt)
-            .ThenByDescending(le => le.Id)
-            .Take(pageSize + 1)
-            .ToListAsync(ct);
+        var entries = await _walletRepository.GetLedgerEntriesAsync(
+            accountIds,
+            cursorTime,
+            pageSize + 1,
+            ct
+        );
 
         var hasMore = entries.Count > pageSize;
         var page = entries.Take(pageSize).ToList();
@@ -161,8 +447,9 @@ public class WalletService : IWalletService
         var accounts = await EnsureAccountsAsync(userId, ct);
         var account = accounts[0];
 
-        var existing = await _db.PaymentIntents.FirstOrDefaultAsync(
-            x => x.UserId == userId && x.IdempotencyKey == idempotencyKey,
+        var existing = await _walletRepository.GetPaymentIntentByIdempotencyAsync(
+            userId,
+            idempotencyKey,
             ct
         );
         if (existing is not null)
@@ -181,8 +468,7 @@ public class WalletService : IWalletService
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
         };
 
-        _db.PaymentIntents.Add(intent);
-        await _db.SaveChangesAsync(ct);
+        await _walletRepository.AddPaymentIntentAsync(intent, ct);
 
         return ServiceResult<CreateDepositResponse>.Ok(MapDeposit(intent));
     }
@@ -200,17 +486,12 @@ public class WalletService : IWalletService
             return ServiceResult<DepositListResponse>.Fail("invalid_cursor");
         }
 
-        var query = _db.PaymentIntents.Where(x => x.UserId == userId);
-        if (cursorTime.HasValue)
-        {
-            query = query.Where(x => x.CreatedAt < cursorTime.Value);
-        }
-
-        var intents = await query
-            .OrderByDescending(x => x.CreatedAt)
-            .ThenByDescending(x => x.Id)
-            .Take(pageSize + 1)
-            .ToListAsync(ct);
+        var intents = await _walletRepository.GetPaymentIntentsAsync(
+            userId,
+            cursorTime,
+            pageSize + 1,
+            ct
+        );
 
         var hasMore = intents.Count > pageSize;
         var page = intents.Take(pageSize).ToList();
@@ -242,8 +523,9 @@ public class WalletService : IWalletService
         var accounts = await EnsureAccountsAsync(userId, ct);
         var account = accounts[0];
 
-        var existing = await _db.Withdrawals.FirstOrDefaultAsync(
-            x => x.UserId == userId && x.IdempotencyKey == idempotencyKey,
+        var existing = await _walletRepository.GetWithdrawalByIdempotencyAsync(
+            userId,
+            idempotencyKey,
             ct
         );
         if (existing is not null)
@@ -251,9 +533,7 @@ public class WalletService : IWalletService
             return ServiceResult<WithdrawalResponse>.Ok(MapWithdrawal(existing));
         }
 
-        var balance = await _db
-            .LedgerEntries.Where(le => le.AccountId == account.Id)
-            .SumAsync(le => le.Amount, ct);
+        var balance = await _walletRepository.GetAccountBalanceAsync(account.Id, ct);
 
         if (balance < request.Amount)
         {
@@ -269,10 +549,9 @@ public class WalletService : IWalletService
             IdempotencyKey = idempotencyKey,
         };
 
-        _db.Withdrawals.Add(withdrawal);
-        await _db.SaveChangesAsync(ct);
+        await _walletRepository.AddWithdrawalAsync(withdrawal, ct);
 
-        _db.LedgerEntries.Add(
+        await _walletRepository.AddLedgerEntryAsync(
             new LedgerEntry
             {
                 AccountId = account.Id,
@@ -281,10 +560,9 @@ public class WalletService : IWalletService
                 ReferenceType = "Withdrawal",
                 ReferenceId = withdrawal.Id,
                 IdempotencyKey = idempotencyKey,
-            }
+            },
+            ct
         );
-
-        await _db.SaveChangesAsync(ct);
 
         return ServiceResult<WithdrawalResponse>.Ok(MapWithdrawal(withdrawal));
     }
@@ -302,17 +580,12 @@ public class WalletService : IWalletService
             return ServiceResult<WithdrawalListResponse>.Fail("invalid_cursor");
         }
 
-        var query = _db.Withdrawals.Where(x => x.UserId == userId);
-        if (cursorTime.HasValue)
-        {
-            query = query.Where(x => x.CreatedAt < cursorTime.Value);
-        }
-
-        var withdrawals = await query
-            .OrderByDescending(x => x.CreatedAt)
-            .ThenByDescending(x => x.Id)
-            .Take(pageSize + 1)
-            .ToListAsync(ct);
+        var withdrawals = await _walletRepository.GetWithdrawalsAsync(
+            userId,
+            cursorTime,
+            pageSize + 1,
+            ct
+        );
 
         var hasMore = withdrawals.Count > pageSize;
         var page = withdrawals.Take(pageSize).ToList();
@@ -332,7 +605,7 @@ public class WalletService : IWalletService
         CancellationToken ct = default
     )
     {
-        var withdrawal = await _db.Withdrawals.FirstOrDefaultAsync(x => x.Id == withdrawalId, ct);
+        var withdrawal = await _walletRepository.GetWithdrawalByIdAsync(withdrawalId, ct);
         if (withdrawal is null)
         {
             return ServiceResult<WithdrawalResponse>.Fail("withdrawal_not_found");
@@ -348,7 +621,7 @@ public class WalletService : IWalletService
         withdrawal.ApprovedByUserId = adminUserId;
         withdrawal.Notes = request.Notes;
 
-        await _db.SaveChangesAsync(ct);
+        await _walletRepository.UpdateWithdrawalAsync(withdrawal, ct);
 
         return ServiceResult<WithdrawalResponse>.Ok(MapWithdrawal(withdrawal));
     }
@@ -360,7 +633,7 @@ public class WalletService : IWalletService
         CancellationToken ct = default
     )
     {
-        var withdrawal = await _db.Withdrawals.FirstOrDefaultAsync(x => x.Id == withdrawalId, ct);
+        var withdrawal = await _walletRepository.GetWithdrawalByIdAsync(withdrawalId, ct);
         if (withdrawal is null)
         {
             return ServiceResult<WithdrawalResponse>.Fail("withdrawal_not_found");
@@ -376,8 +649,9 @@ public class WalletService : IWalletService
         withdrawal.ApprovedByUserId = adminUserId;
         withdrawal.Notes = request.Notes;
 
-        var account = await _db.Accounts.FirstOrDefaultAsync(
-            x => x.UserId == withdrawal.UserId && x.Currency == withdrawal.Currency,
+        var account = await _walletRepository.GetAccountByUserAndCurrencyAsync(
+            withdrawal.UserId,
+            withdrawal.Currency,
             ct
         );
         if (account is null)
@@ -385,7 +659,7 @@ public class WalletService : IWalletService
             return ServiceResult<WithdrawalResponse>.Fail("account_not_found");
         }
 
-        _db.LedgerEntries.Add(
+        await _walletRepository.AddLedgerEntryAsync(
             new LedgerEntry
             {
                 AccountId = account.Id,
@@ -394,28 +668,15 @@ public class WalletService : IWalletService
                 ReferenceType = "Withdrawal",
                 ReferenceId = withdrawal.Id,
                 IdempotencyKey = $"withdraw-reject-{withdrawal.Id}",
-            }
+            },
+            ct
         );
-
-        await _db.SaveChangesAsync(ct);
 
         return ServiceResult<WithdrawalResponse>.Ok(MapWithdrawal(withdrawal));
     }
 
-    private async Task<List<Account>> EnsureAccountsAsync(Guid userId, CancellationToken ct)
-    {
-        var accounts = await _db.Accounts.Where(a => a.UserId == userId).ToListAsync(ct);
-        if (accounts.Count > 0)
-        {
-            return accounts;
-        }
-
-        var account = new Account { UserId = userId, Currency = DefaultCurrency };
-        _db.Accounts.Add(account);
-        await _db.SaveChangesAsync(ct);
-
-        return new List<Account> { account };
-    }
+    private Task<List<Account>> EnsureAccountsAsync(Guid userId, CancellationToken ct) =>
+        _walletRepository.EnsureAccountsAsync(userId, DefaultCurrency, ct);
 
     private static bool TryParseCursor(string? cursor, out DateTimeOffset? cursorTime)
     {
@@ -432,6 +693,37 @@ public class WalletService : IWalletService
 
         cursorTime = parsed;
         return true;
+    }
+
+    private static PaymentIntentStatus? MapMpStatusToIntentStatus(
+        string? status,
+        string? statusDetail
+    )
+    {
+        if (string.Equals(statusDetail, "expired", StringComparison.OrdinalIgnoreCase))
+        {
+            return PaymentIntentStatus.EXPIRED;
+        }
+
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return null;
+        }
+
+        var normalized = status.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "approved" => PaymentIntentStatus.APPROVED,
+            "authorized" => PaymentIntentStatus.APPROVED,
+            "paid" => PaymentIntentStatus.APPROVED,
+            "processed" => PaymentIntentStatus.APPROVED,
+            "failed" => PaymentIntentStatus.REJECTED,
+            "rejected" => PaymentIntentStatus.REJECTED,
+            "cancelled" => PaymentIntentStatus.EXPIRED,
+            "canceled" => PaymentIntentStatus.EXPIRED,
+            "expired" => PaymentIntentStatus.EXPIRED,
+            _ => null,
+        };
     }
 
     private static CreateDepositResponse MapDeposit(PaymentIntent intent) =>
@@ -465,4 +757,28 @@ public class WalletService : IWalletService
             Currency = withdrawal.Currency,
             RequestedAt = withdrawal.CreatedAt,
         };
+
+    private static bool TryGetUserId(ClaimsPrincipal principal, out Guid userId)
+    {
+        var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        return Guid.TryParse(sub, out userId);
+    }
+
+    private static bool TryGetIdempotencyKey(IHeaderDictionary headers, out string idempotencyKey)
+    {
+        idempotencyKey = string.Empty;
+        if (!headers.TryGetValue("Idempotency-Key", out var values))
+        {
+            return false;
+        }
+
+        var value = values.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        idempotencyKey = value;
+        return true;
+    }
 }

@@ -10,7 +10,7 @@ public class LedgerEntryConfiguration : IEntityTypeConfiguration<LedgerEntry>
     {
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Type).IsRequired();
-        builder.Property(x => x.Amount).IsRequired();
+        builder.Property(x => x.Amount).IsRequired().HasPrecision(18, 6);
         builder.Property(x => x.ReferenceType).HasMaxLength(64);
         builder.Property(x => x.IdempotencyKey).HasMaxLength(128);
 

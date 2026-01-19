@@ -3,6 +3,6 @@
 public class WalletBalanceResponse
 {
     public string Currency { get; set; } = default!;
-    public long Balance { get; set; }
-    public long Available { get; set; }
+    public decimal Balance { get; set; }
+    public decimal Available { get; set; }
 }

@@ -2,17 +2,19 @@ using System.Globalization;
 using System.Linq;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Google.Apis.Auth;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Product.Business.Interfaces.Auth;
+using Product.Business.Interfaces.Results;
 using Product.Business.Options;
 using Product.Common.Enums;
 using Product.Contracts.Auth;
-using Product.Data.Database.Contexts;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Users;
 
 namespace Product.Business.Services.Auth;
@@ -22,7 +24,7 @@ public class AuthService : IAuthService
     private readonly UserManager<User> _userManager;
     private readonly RoleManager<Role> _roleManager;
     private readonly SignInManager<User> _signInManager;
-    private readonly AppDbContext _db;
+    private readonly IUserRepository _userRepository;
     private readonly IEmailSender _emailSender;
     private readonly IOptions<FrontendOptions> _frontendOptions;
     private readonly IOptionsMonitor<Microsoft.AspNetCore.Authentication.BearerToken.BearerTokenOptions> _bearerOptions;
@@ -33,7 +35,7 @@ public class AuthService : IAuthService
         UserManager<User> userManager,
         RoleManager<Role> roleManager,
         SignInManager<User> signInManager,
-        AppDbContext db,
+        IUserRepository userRepository,
         IEmailSender emailSender,
         IOptions<FrontendOptions> frontendOptions,
         IOptionsMonitor<Microsoft.AspNetCore.Authentication.BearerToken.BearerTokenOptions> bearerOptions,
@@ -44,12 +46,202 @@ public class AuthService : IAuthService
         _userManager = userManager;
         _roleManager = roleManager;
         _signInManager = signInManager;
-        _db = db;
+        _userRepository = userRepository;
         _emailSender = emailSender;
         _frontendOptions = frontendOptions;
         _bearerOptions = bearerOptions;
         _googleOptions = googleOptions;
         _logger = logger;
+    }
+
+    public async Task<ApiResult> SignUpApiAsync(SignupRequest request, CancellationToken ct)
+    {
+        await SignUpAsync(request, ct);
+        return ApiResult.NoContent();
+    }
+
+    public async Task<ApiResult> SignInApiAsync(
+        LoginRequest request,
+        bool? useCookies,
+        bool? useSessionCookies
+    )
+    {
+        await SignInAsync(request, useCookies, useSessionCookies);
+        return ApiResult.Ok(null);
+    }
+
+    public async Task<ApiResult> SignOutApiAsync()
+    {
+        await SignOutAsync();
+        return ApiResult.NoContent();
+    }
+
+    public async Task<ApiResult> RefreshApiAsync(RefreshRequest request)
+    {
+        await RefreshAsync(request);
+        return ApiResult.Ok(null);
+    }
+
+    public async Task<ApiResult> ConfirmEmailApiAsync(Guid userId, string code, string? newEmail)
+    {
+        await ConfirmEmailAsync(userId, code, newEmail);
+        return ApiResult.Ok(null);
+    }
+
+    public async Task<ApiResult> ResendConfirmationEmailApiAsync(
+        ResendConfirmationEmailRequest request,
+        CancellationToken ct
+    )
+    {
+        await ResendConfirmationEmailAsync(request, ct);
+        return ApiResult.Ok(null);
+    }
+
+    public async Task<ApiResult> ResendResetCodeApiAsync(
+        ForgotPasswordRequest request,
+        CancellationToken ct
+    )
+    {
+        await ForgotPasswordAsync(request, ct);
+        return ApiResult.Ok(null);
+    }
+
+    public async Task<ApiResult> GoogleSignInApiAsync(
+        GoogleLoginRequest request,
+        bool? useCookies = null,
+        bool? useSessionCookies = null
+    )
+    {
+        try
+        {
+            await GoogleLoginAsync(request, useCookies, useSessionCookies);
+            return ApiResult.Ok(null);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_google_token");
+        }
+    }
+
+    public async Task<ApiResult> ForgotPasswordApiAsync(
+        ForgotPasswordRequest request,
+        CancellationToken ct
+    )
+    {
+        await ForgotPasswordAsync(request, ct);
+        return ApiResult.Ok(null);
+    }
+
+    public async Task<ApiResult> ResetPasswordApiAsync(
+        ResetPasswordRequest request,
+        CancellationToken ct
+    )
+    {
+        await ResetPasswordAsync(request, ct);
+        return ApiResult.Ok(null);
+    }
+
+    public async Task<ApiResult> VerifyResetCodeApiAsync(VerifyResetCodeRequest request)
+    {
+        try
+        {
+            await VerifyResetCodeAsync(request);
+            return ApiResult.Ok(null);
+        }
+        catch (KeyNotFoundException)
+        {
+            return ApiResult.Problem(StatusCodes.Status404NotFound, "user_not_found");
+        }
+        catch (ArgumentException ex) when (ex.Message == "invalid_reset_token")
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, "invalid_reset_token");
+        }
+        catch (ArgumentException ex)
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, ex.Message);
+        }
+    }
+
+    public async Task<ApiResult> GetInfoApiAsync(ClaimsPrincipal principal)
+    {
+        var info = await GetInfoAsync(principal);
+        return ApiResult.Ok(info);
+    }
+
+    public async Task<ApiResult> UpdateInfoApiAsync(
+        ClaimsPrincipal principal,
+        InfoRequest request,
+        CancellationToken ct
+    )
+    {
+        try
+        {
+            var info = await UpdateInfoAsync(principal, request, ct);
+            return ApiResult.Ok(info);
+        }
+        catch (InvalidOperationException ex)
+            when (ex.Message == "external_account_cannot_change_password")
+        {
+            return ApiResult.Problem(
+                StatusCodes.Status400BadRequest,
+                "external_account_cannot_change_password"
+            );
+        }
+    }
+
+    public async Task<ApiResult> GetTwoFactorApiAsync(ClaimsPrincipal principal)
+    {
+        var resp = await GetTwoFactorAsync(principal);
+        return ApiResult.Ok(resp);
+    }
+
+    public async Task<ApiResult> UpdateTwoFactorApiAsync(
+        ClaimsPrincipal principal,
+        TwoFactorRequest request
+    )
+    {
+        var resp = await UpdateTwoFactorAsync(principal, request);
+        return ApiResult.Ok(resp);
+    }
+
+    public async Task<ApiResult> HasExternalLoginApiAsync(ClaimsPrincipal principal)
+    {
+        var providers = await GetExternalLoginProvidersAsync(principal);
+        var has = providers != null && providers.Any();
+        return ApiResult.Ok(new { hasExternalLogin = has, providers });
+    }
+
+    public async Task<ApiResult> ChangePasswordApiAsync(
+        ClaimsPrincipal principal,
+        ChangePasswordRequest request,
+        CancellationToken ct
+    )
+    {
+        try
+        {
+            await ChangePasswordAsync(principal, request, ct);
+            return ApiResult.Ok(null);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+        catch (ArgumentException ex) when (ex.Message == "password_mismatch")
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, "password_mismatch");
+        }
+        catch (InvalidOperationException ex)
+            when (ex.Message == "external_account_cannot_change_password")
+        {
+            return ApiResult.Problem(
+                StatusCodes.Status400BadRequest,
+                "external_account_cannot_change_password"
+            );
+        }
+        catch (ArgumentException ex)
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, ex.Message);
+        }
     }
 
     public async Task<bool> HasExternalLoginAsync(
@@ -158,11 +350,7 @@ public class AuthService : IAuthService
             await EnsureRoleAsync(RoleName.USER.ToString());
             await _userManager.AddToRoleAsync(user, RoleName.USER.ToString());
 
-            if (!await _db.UserPersonalData.AnyAsync(x => x.UserId == user.Id))
-            {
-                _db.UserPersonalData.Add(new UserPersonalData { UserId = user.Id });
-                await _db.SaveChangesAsync();
-            }
+            await _userRepository.EnsurePersonalDataAsync(user.Id);
             // Ensure external login is associated when creating user via Google
             var loginInfo = new UserLoginInfo("Google", payload.Subject ?? string.Empty, "Google");
             var addLoginResult = await _userManager.AddLoginAsync(user, loginInfo);
@@ -261,11 +449,7 @@ public class AuthService : IAuthService
         await EnsureRoleAsync(RoleName.USER.ToString());
         await _userManager.AddToRoleAsync(user, RoleName.USER.ToString());
 
-        if (!await _db.UserPersonalData.AnyAsync(x => x.UserId == user.Id, ct))
-        {
-            _db.UserPersonalData.Add(new UserPersonalData { UserId = user.Id });
-            await _db.SaveChangesAsync(ct);
-        }
+        await _userRepository.EnsurePersonalDataAsync(user.Id, ct);
 
         await SendConfirmationEmailAsync(user, ct);
     }
@@ -473,11 +657,17 @@ public class AuthService : IAuthService
             {
                 var isAuth = principal?.Identity?.IsAuthenticated ?? false;
                 _logger?.LogWarning("GetInfoAsync: principal.IsAuthenticated={IsAuth}", isAuth);
-                var nameId = principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-                _logger?.LogWarning("GetInfoAsync: Claim NameIdentifier={NameId}", nameId ?? "(null)");
+                var nameId = principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                _logger?.LogWarning(
+                    "GetInfoAsync: Claim NameIdentifier={NameId}",
+                    nameId ?? "(null)"
+                );
                 var claims = principal?.Claims?.Select(c => new { c.Type, c.Value }).ToList();
                 if (claims != null && claims.Count > 0)
-                    _logger?.LogWarning("GetInfoAsync: Claims={Claims}", System.Text.Json.JsonSerializer.Serialize(claims));
+                    _logger?.LogWarning(
+                        "GetInfoAsync: Claims={Claims}",
+                        JsonSerializer.Serialize(claims)
+                    );
                 else
                     _logger?.LogWarning("GetInfoAsync: No claims present on principal");
             }

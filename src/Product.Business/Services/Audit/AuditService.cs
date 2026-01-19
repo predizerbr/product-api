@@ -1,17 +1,17 @@
 using System.Text.Json;
 using Product.Business.Interfaces.Audit;
-using Product.Data.Database.Contexts;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Audit;
 
 namespace Product.Business.Services.Audit;
 
 public class AuditService : IAuditService
 {
-    private readonly AppDbContext _db;
+    private readonly IAuditRepository _auditRepository;
 
-    public AuditService(AppDbContext db)
+    public AuditService(IAuditRepository auditRepository)
     {
-        _db = db;
+        _auditRepository = auditRepository;
     }
 
     public async Task LogAsync(
@@ -27,7 +27,7 @@ public class AuditService : IAuditService
     {
         var metaJson = meta is null ? null : JsonSerializer.Serialize(meta);
 
-        _db.AuditLogs.Add(
+        await _auditRepository.AddAsync(
             new AuditLog
             {
                 UserId = userId,
@@ -37,9 +37,8 @@ public class AuditService : IAuditService
                 MetaJson = metaJson,
                 Ip = ip,
                 UserAgent = userAgent,
-            }
+            },
+            ct
         );
-
-        await _db.SaveChangesAsync(ct);
     }
 }

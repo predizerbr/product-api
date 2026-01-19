@@ -11,6 +11,7 @@ public class PaymentIntentConfiguration : IEntityTypeConfiguration<PaymentIntent
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Provider).IsRequired().HasMaxLength(32);
         builder.Property(x => x.Currency).IsRequired().HasMaxLength(8);
+        builder.Property(x => x.Amount).IsRequired().HasPrecision(18, 6);
         builder.Property(x => x.IdempotencyKey).IsRequired().HasMaxLength(128);
         builder.Property(x => x.ExternalPaymentId).HasMaxLength(128);
 

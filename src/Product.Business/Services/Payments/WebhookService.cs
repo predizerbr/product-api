@@ -1,17 +1,16 @@
-using Microsoft.EntityFrameworkCore;
 using Product.Business.Interfaces.Payments;
-using Product.Data.Database.Contexts;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Webhooks;
 
 namespace Product.Business.Services.Payments;
 
 public class WebhookService : IWebhookService
 {
-    private readonly AppDbContext _db;
+    private readonly IWebhookRepository _webhookRepository;
 
-    public WebhookService(AppDbContext db)
+    public WebhookService(IWebhookRepository webhookRepository)
     {
-        _db = db;
+        _webhookRepository = webhookRepository;
     }
 
     public async Task<MPWebhookEvent> SaveAsync(
@@ -36,8 +35,7 @@ public class WebhookService : IWebhookService
             AttemptCount = 1,
         };
 
-        _db.MPWebhookEvent.Add(ev);
-        await _db.SaveChangesAsync(ct);
+        await _webhookRepository.AddAsync(ev, ct);
         return ev;
     }
 
@@ -46,10 +44,7 @@ public class WebhookService : IWebhookService
         CancellationToken ct = default
     )
     {
-        return await _db.MPWebhookEvent.FirstOrDefaultAsync(
-            w => w.ProviderPaymentId == providerPaymentId,
-            ct
-        );
+        return await _webhookRepository.GetByProviderPaymentIdAsync(providerPaymentId, ct);
     }
 
     public async Task MarkProcessedAsync(
@@ -60,7 +55,7 @@ public class WebhookService : IWebhookService
         CancellationToken ct = default
     )
     {
-        var ev = await _db.MPWebhookEvent.FindAsync(new object[] { id }, ct);
+        var ev = await _webhookRepository.GetByIdAsync(id, ct);
         if (ev is null)
             return;
         ev.Processed = processed;
@@ -69,6 +64,6 @@ public class WebhookService : IWebhookService
         ev.ProcessingResult = result;
         if (!string.IsNullOrWhiteSpace(orderId))
             ev.OrderId = orderId;
-        await _db.SaveChangesAsync(ct);
+        await _webhookRepository.UpdateAsync(ev, ct);
     }
 }

@@ -1,32 +1,45 @@
 using System.Globalization;
 using System.Text;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Product.Business.Interfaces.Auth;
 using Product.Business.Interfaces.Users;
 using Product.Common.Enums;
-using Product.Data.Database.Contexts;
-using Product.Data.Models.Payments;
+using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Users;
+using Product.Data.Models.Users.PaymentsMethods;
 using Product.Data.Models.Wallet;
 
 namespace Product.Business.Services.Users;
 
 public class DatabaseSeeder : IDatabaseSeeder
 {
-    private readonly AppDbContext _db;
+    private readonly IDbMigrationRepository _migrationRepository;
+    private readonly IRoleRepository _roleRepository;
+    private readonly IUserRepository _userRepository;
+    private readonly IPaymentMethodRepository _paymentMethodRepository;
+    private readonly IWalletRepository _walletRepository;
     private readonly IPasswordHasher _hasher;
 
-    public DatabaseSeeder(AppDbContext db, IPasswordHasher hasher)
+    public DatabaseSeeder(
+        IDbMigrationRepository migrationRepository,
+        IRoleRepository roleRepository,
+        IUserRepository userRepository,
+        IPaymentMethodRepository paymentMethodRepository,
+        IWalletRepository walletRepository,
+        IPasswordHasher hasher
+    )
     {
-        _db = db;
+        _migrationRepository = migrationRepository;
+        _roleRepository = roleRepository;
+        _userRepository = userRepository;
+        _paymentMethodRepository = paymentMethodRepository;
+        _walletRepository = walletRepository;
         _hasher = hasher;
     }
 
     public async Task SeedAsync(IConfiguration configuration, CancellationToken ct = default)
     {
-        await _db.Database.MigrateAsync(ct);
+        await _migrationRepository.MigrateAsync(ct);
 
         var roles = new[]
         {
@@ -39,21 +52,20 @@ public class DatabaseSeeder : IDatabaseSeeder
         {
             var roleValue = roleName.ToString();
             var normalizedRole = NormalizeRoleName(roleValue);
-            if (!await _db.Roles.AnyAsync(r => r.Name == roleValue, ct))
+            if (!await _roleRepository.RoleExistsAsync(roleValue, ct))
             {
-                _db.Roles.Add(
+                await _roleRepository.AddRoleAsync(
                     new Role
                     {
                         Id = Guid.NewGuid(),
                         Name = roleValue,
                         NormalizedName = normalizedRole,
                         ConcurrencyStamp = Guid.NewGuid().ToString(),
-                    }
+                    },
+                    ct
                 );
             }
         }
-
-        await _db.SaveChangesAsync(ct);
 
         var seedSection = configuration.GetSection("Seed:Admin");
         var adminEmail = seedSection.GetValue<string>("Email");
@@ -74,9 +86,7 @@ public class DatabaseSeeder : IDatabaseSeeder
         var normalizedEmail = NormalizeEmail(adminEmail);
         var normalizedName = NormalizeName(adminName);
 
-        var admin = await _db
-            .Users.Include(u => u.PersonalData)
-            .FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+        var admin = await _userRepository.GetUserWithPersonalDataByEmailAsync(normalizedEmail, ct);
         if (admin is null)
         {
             var username = string.IsNullOrWhiteSpace(adminUsername)
@@ -106,24 +116,19 @@ public class DatabaseSeeder : IDatabaseSeeder
                 },
             };
 
-            _db.Users.Add(admin);
-            await _db.SaveChangesAsync(ct);
+            await _userRepository.AddUserAsync(admin, ct);
         }
 
         await EnsurePaymentMethodsAsync(admin, seedSection, ct);
 
-        var adminRole = await _db.Roles.FirstAsync(r => r.Name == RoleName.ADMIN_L3.ToString(), ct);
-        if (
-            !await _db.UserRoles.AnyAsync(
-                ur => ur.UserId == admin.Id && ur.RoleId == adminRole.Id,
-                ct
-            )
-        )
+        var adminRole = await _roleRepository.GetRoleByNameAsync(RoleName.ADMIN_L3.ToString(), ct);
+        if (adminRole is null)
         {
-            _db.UserRoles.Add(
-                new IdentityUserRole<Guid> { UserId = admin.Id, RoleId = adminRole.Id }
-            );
-            await _db.SaveChangesAsync(ct);
+            throw new InvalidOperationException("role_not_found");
+        }
+        if (!await _roleRepository.UserRoleExistsAsync(admin.Id, adminRole.Id, ct))
+        {
+            await _roleRepository.AddUserRoleAsync(admin.Id, adminRole.Id, ct);
         }
 
         await SeedDefaultUserAsync(configuration, ct);
@@ -149,9 +154,7 @@ public class DatabaseSeeder : IDatabaseSeeder
         var normalizedEmail = NormalizeEmail(userEmail);
         var normalizedName = NormalizeName(userName);
 
-        var user = await _db
-            .Users.Include(u => u.PersonalData)
-            .FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+        var user = await _userRepository.GetUserWithPersonalDataByEmailAsync(normalizedEmail, ct);
         if (user is null)
         {
             var username = string.IsNullOrWhiteSpace(userUsername)
@@ -186,24 +189,19 @@ public class DatabaseSeeder : IDatabaseSeeder
                 };
             }
 
-            _db.Users.Add(user);
-            await _db.SaveChangesAsync(ct);
+            await _userRepository.AddUserAsync(user, ct);
         }
 
         await EnsurePaymentMethodsAsync(user, seedSection, ct);
 
-        var userRole = await _db.Roles.FirstAsync(r => r.Name == RoleName.USER.ToString(), ct);
-        if (
-            !await _db.UserRoles.AnyAsync(
-                ur => ur.UserId == user.Id && ur.RoleId == userRole.Id,
-                ct
-            )
-        )
+        var userRole = await _roleRepository.GetRoleByNameAsync(RoleName.USER.ToString(), ct);
+        if (userRole is null)
         {
-            _db.UserRoles.Add(
-                new IdentityUserRole<Guid> { UserId = user.Id, RoleId = userRole.Id }
-            );
-            await _db.SaveChangesAsync(ct);
+            throw new InvalidOperationException("role_not_found");
+        }
+        if (!await _roleRepository.UserRoleExistsAsync(user.Id, userRole.Id, ct))
+        {
+            await _roleRepository.AddUserRoleAsync(user.Id, userRole.Id, ct);
         }
     }
 
@@ -225,25 +223,21 @@ public class DatabaseSeeder : IDatabaseSeeder
         }
 
         var normalizedEmail = NormalizeEmail(userEmail);
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
+        var user = await _userRepository.GetUserByEmailAsync(normalizedEmail, ct);
         if (user is null)
         {
             return;
         }
 
-        var account = await _db.Accounts.FirstOrDefaultAsync(a => a.UserId == user.Id, ct);
-        if (account is null)
-        {
-            account = new Account { UserId = user.Id, Currency = "BRL" };
-            _db.Accounts.Add(account);
-            await _db.SaveChangesAsync(ct);
-        }
+        var accounts = await _walletRepository.EnsureAccountsAsync(user.Id, "BRL", ct);
+        var account = accounts[0];
 
         var paymentKey = $"seed-payment-{user.Id}";
         var withdrawalKey = $"seed-withdrawal-{user.Id}";
 
-        var payment = await _db.PaymentIntents.FirstOrDefaultAsync(
-            x => x.IdempotencyKey == paymentKey,
+        var payment = await _walletRepository.GetPaymentIntentByIdempotencyAsync(
+            user.Id,
+            paymentKey,
             ct
         );
         if (payment is null)
@@ -259,12 +253,12 @@ public class DatabaseSeeder : IDatabaseSeeder
                 ExpiresAt = DateTimeOffset.UtcNow.AddDays(1),
             };
 
-            _db.PaymentIntents.Add(payment);
-            await _db.SaveChangesAsync(ct);
+            await _walletRepository.AddPaymentIntentAsync(payment, ct);
         }
 
-        var withdrawal = await _db.Withdrawals.FirstOrDefaultAsync(
-            x => x.IdempotencyKey == withdrawalKey,
+        var withdrawal = await _walletRepository.GetWithdrawalByIdempotencyAsync(
+            user.Id,
+            withdrawalKey,
             ct
         );
         if (withdrawal is null)
@@ -279,8 +273,7 @@ public class DatabaseSeeder : IDatabaseSeeder
                 Notes = "Seed withdrawal",
             };
 
-            _db.Withdrawals.Add(withdrawal);
-            await _db.SaveChangesAsync(ct);
+            await _walletRepository.AddWithdrawalAsync(withdrawal, ct);
         }
 
         var baseTime = DateTimeOffset.UtcNow.AddDays(-5);
@@ -328,10 +321,10 @@ public class DatabaseSeeder : IDatabaseSeeder
             ),
         };
 
-        var existingKeys = await _db
-            .LedgerEntries.Where(le => le.AccountId == account.Id && le.IdempotencyKey != null)
-            .Select(le => le.IdempotencyKey!)
-            .ToListAsync(ct);
+        var existingKeys = await _walletRepository.GetLedgerEntryIdempotencyKeysAsync(
+            account.Id,
+            ct
+        );
 
         var toAdd = new List<LedgerEntry>();
         foreach (var entry in entries)
@@ -358,8 +351,7 @@ public class DatabaseSeeder : IDatabaseSeeder
 
         if (toAdd.Count > 0)
         {
-            _db.LedgerEntries.AddRange(toAdd);
-            await _db.SaveChangesAsync(ct);
+            await _walletRepository.AddLedgerEntriesAsync(toAdd, ct);
         }
     }
 
@@ -367,7 +359,7 @@ public class DatabaseSeeder : IDatabaseSeeder
     {
         var candidate = username;
         var suffix = 1;
-        while (await _db.Users.AnyAsync(u => u.NormalizedUserName == candidate, ct))
+        while (await _userRepository.UserNameExistsAsync(candidate, ct))
         {
             candidate = $"{username}{suffix}";
             suffix++;
@@ -451,36 +443,59 @@ public class DatabaseSeeder : IDatabaseSeeder
         CancellationToken ct
     )
     {
-        var methods = BuildPaymentMethods(section, user.Id);
-        if (methods.Count == 0)
+        var (cardsToAdd, banksToAdd, pixToAdd) = BuildPaymentMethods(section, user.Id);
+        if (cardsToAdd.Count == 0 && banksToAdd.Count == 0 && pixToAdd.Count == 0)
         {
             return;
         }
 
-        var existing = await _db.PaymentMethods.Where(x => x.UserId == user.Id).ToListAsync(ct);
+        var (existingCards, existingBanks, existingPix) = await _paymentMethodRepository.GetByUserAsync(user.Id, ct);
 
-        foreach (var method in methods)
+        var addedAny = false;
+
+        foreach (var card in cardsToAdd)
         {
-            if (existing.Any(x => IsSamePaymentMethod(x, method)))
+            if (existingCards.Any(x => IsSameUserCard(x, card)))
             {
                 continue;
             }
 
-            _db.PaymentMethods.Add(method);
+            await _paymentMethodRepository.AddUserCardAsync(card, ct);
+            addedAny = true;
         }
 
-        if (methods.Any(x => x.IsDefault) && existing.All(x => !x.IsDefault))
+        foreach (var bank in banksToAdd)
         {
-            foreach (var item in existing)
+            if (existingBanks.Any(x => IsSameUserBank(x, bank)))
             {
-                item.IsDefault = false;
+                continue;
             }
+
+            await _paymentMethodRepository.AddUserBankAccountAsync(bank, ct);
+            addedAny = true;
         }
 
-        await _db.SaveChangesAsync(ct);
+        foreach (var pix in pixToAdd)
+        {
+            if (existingPix.Any(x => IsSameUserPix(x, pix)))
+            {
+                continue;
+            }
+
+            await _paymentMethodRepository.AddUserPixKeyAsync(pix, ct);
+            addedAny = true;
+        }
+
+        if (addedAny)
+        {
+            await _paymentMethodRepository.SaveChangesAsync(ct);
+        }
     }
 
-    private static List<PaymentMethod> BuildPaymentMethods(IConfiguration section, Guid userId)
+    private static (List<UserCard> Cards, List<UserBankAccount> Banks, List<UserPixKey> Pix) BuildPaymentMethods(
+        IConfiguration section,
+        Guid userId
+    )
     {
         var bankSection = section.GetSection("BankAccount");
         var bankCode = bankSection.GetValue<string>("BankCode");
@@ -491,17 +506,20 @@ public class DatabaseSeeder : IDatabaseSeeder
         var accountType = bankSection.GetValue<string>("AccountType");
         var pixKey = bankSection.GetValue<string>("PixKey");
 
-        var methods = new List<PaymentMethod>();
+        var cards = new List<UserCard>();
+        var banks = new List<UserBankAccount>();
+        var pix = new List<UserPixKey>();
 
         if (!string.IsNullOrWhiteSpace(pixKey))
         {
-            methods.Add(
-                new PaymentMethod
+            pix.Add(
+                new UserPixKey
                 {
+                    Id = Guid.NewGuid(),
                     UserId = userId,
-                    Type = PaymentMethodType.PIX,
                     PixKey = pixKey,
                     IsDefault = true,
+                    CreatedAt = DateTimeOffset.UtcNow,
                 }
             );
         }
@@ -512,46 +530,40 @@ public class DatabaseSeeder : IDatabaseSeeder
             && !string.IsNullOrWhiteSpace(accountNumber)
         )
         {
-            methods.Add(
-                new PaymentMethod
+            banks.Add(
+                new UserBankAccount
                 {
+                    Id = Guid.NewGuid(),
                     UserId = userId,
-                    Type = PaymentMethodType.BANK_ACCOUNT,
                     BankCode = bankCode,
                     BankName = bankName,
                     Agency = agency,
                     AccountNumber = accountNumber,
                     AccountDigit = accountDigit,
                     AccountType = accountType,
-                    IsDefault = methods.Count == 0,
+                    IsDefault = pix.Count == 0 && banks.Count == 0,
+                    CreatedAt = DateTimeOffset.UtcNow,
                 }
             );
         }
 
-        return methods;
+        return (cards, banks, pix);
     }
 
-    private static bool IsSamePaymentMethod(PaymentMethod existing, PaymentMethod candidate)
-    {
-        if (existing.Type != candidate.Type)
-        {
-            return false;
-        }
+    private static bool IsSameUserCard(UserCard existing, UserCard candidate) =>
+        string.Equals(existing.CardLast4, candidate.CardLast4)
+        && string.Equals(existing.CardBrand, candidate.CardBrand)
+        && existing.CardExpMonth == candidate.CardExpMonth
+        && existing.CardExpYear == candidate.CardExpYear;
 
-        return existing.Type switch
-        {
-            PaymentMethodType.PIX => string.Equals(existing.PixKey, candidate.PixKey),
-            PaymentMethodType.CARD => string.Equals(existing.CardLast4, candidate.CardLast4)
-                && string.Equals(existing.CardBrand, candidate.CardBrand)
-                && existing.CardExpMonth == candidate.CardExpMonth
-                && existing.CardExpYear == candidate.CardExpYear,
-            PaymentMethodType.BANK_ACCOUNT => string.Equals(existing.BankCode, candidate.BankCode)
-                && string.Equals(existing.Agency, candidate.Agency)
-                && string.Equals(existing.AccountNumber, candidate.AccountNumber)
-                && string.Equals(existing.AccountDigit, candidate.AccountDigit),
-            _ => false,
-        };
-    }
+    private static bool IsSameUserBank(UserBankAccount existing, UserBankAccount candidate) =>
+        string.Equals(existing.BankCode, candidate.BankCode)
+        && string.Equals(existing.Agency, candidate.Agency)
+        && string.Equals(existing.AccountNumber, candidate.AccountNumber)
+        && string.Equals(existing.AccountDigit, candidate.AccountDigit);
+
+    private static bool IsSameUserPix(UserPixKey existing, UserPixKey candidate) =>
+        string.Equals(existing.PixKey, candidate.PixKey);
 
     private sealed record SeedLedgerEntry(
         string IdempotencyKey,
