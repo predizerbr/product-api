@@ -1,15 +1,15 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copia csproj e restaura dependências para cache de camadas
-COPY ["Product.Api/Product.Api.csproj", "Product.Api/"]
-COPY ["Product.Business/Product.Business.csproj", "Product.Business/"]
-COPY ["Product.Common/Product.Common.csproj", "Product.Common/"]
+# Copy csproj files to leverage layer caching
+COPY ["src/Product.Api/Product.Api.csproj", "Product.Api/"]
+COPY ["src/Product.Business/Product.Business.csproj", "Product.Business/"]
+COPY ["src/Product.Common/Product.Common.csproj", "Product.Common/"]
 
 RUN dotnet restore "Product.Api/Product.Api.csproj"
 
-# Copia todo o código e publica
-COPY . .
+# Copy source files from src folder
+COPY src/. .
 WORKDIR /src/Product.Api
 RUN dotnet publish "Product.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
