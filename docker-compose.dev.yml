@@ -10,7 +10,7 @@ services:
     env_file:
       - .env.development
     environment:
-      - ASPNETCORE_ENVIRONMENT
+      - ASPNETCORE_ENVIRONMENT=Development
     depends_on:
       - db
     restart: unless-stopped

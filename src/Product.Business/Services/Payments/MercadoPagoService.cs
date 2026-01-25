@@ -902,8 +902,11 @@ public class MercadoPagoService : IMercadoPagoService
             try
             {
                 using var doc = JsonDocument.Parse(raw);
+                var parsedRawRoot = doc.RootElement;
+
+                // common: { "data": { "id": "123" }, ... }
                 if (
-                    doc.RootElement.TryGetProperty("data", out var data)
+                    parsedRawRoot.TryGetProperty("data", out var data)
                     && data.TryGetProperty("id", out var idEl)
                 )
                 {
@@ -919,14 +922,74 @@ public class MercadoPagoService : IMercadoPagoService
                         paymentId = v2;
                     }
                 }
+                // feed v2: { "resource": "1434...", "topic": "payment" }
+                else if (parsedRawRoot.TryGetProperty("resource", out var resourceEl))
+                {
+                    if (
+                        resourceEl.ValueKind == JsonValueKind.String
+                        && long.TryParse(resourceEl.GetString(), out var v3)
+                    )
+                        paymentId = v3;
+                    else if (
+                        resourceEl.ValueKind == JsonValueKind.Number
+                        && resourceEl.TryGetInt64(out var v4)
+                    )
+                        paymentId = v4;
+                }
+                // fallback: top-level id
+                else if (parsedRawRoot.TryGetProperty("id", out var idTop))
+                {
+                    if (
+                        idTop.ValueKind == JsonValueKind.String
+                        && long.TryParse(idTop.GetString(), out var v5)
+                    )
+                        paymentId = v5;
+                    else if (
+                        idTop.ValueKind == JsonValueKind.Number
+                        && idTop.TryGetInt64(out var v6)
+                    )
+                        paymentId = v6;
+                }
             }
             catch { }
         }
 
-        var headers = string.Join(
-            ";",
-            request.Headers.Select(h => $"{h.Key}:{string.Join(',', h.Value!)}")
-        );
+        var headers = Product.Common.Utilities.HeaderUtils.FormatHeaders(request.Headers);
+
+        // Try to infer an orderId (external_reference) from the raw payload to save it upfront
+        string? inferredOrderId = null;
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            try
+            {
+                using var docForOrder = JsonDocument.Parse(raw);
+                var parsedRawForOrder = docForOrder.RootElement;
+                if (
+                    parsedRawForOrder.TryGetProperty("external_reference", out var externalRefEl)
+                    && externalRefEl.ValueKind == JsonValueKind.String
+                )
+                    inferredOrderId = externalRefEl.GetString();
+                else if (
+                    parsedRawForOrder.TryGetProperty("data", out var dataForOrder)
+                    && dataForOrder.ValueKind == JsonValueKind.Object
+                )
+                {
+                    if (
+                        dataForOrder.TryGetProperty("external_reference", out var externalRefEl2)
+                        && externalRefEl2.ValueKind == JsonValueKind.String
+                    )
+                        inferredOrderId = externalRefEl2.GetString();
+                }
+                else if (parsedRawForOrder.TryGetProperty("resource", out var resourceEl))
+                {
+                    if (resourceEl.ValueKind == JsonValueKind.String)
+                        inferredOrderId = resourceEl.GetString();
+                    else if (resourceEl.ValueKind == JsonValueKind.Number)
+                        inferredOrderId = resourceEl.GetRawText();
+                }
+            }
+            catch { }
+        }
 
         // signature validation (if configured)
         var signatureHeader = GetSignatureFromRequestHeaders(request);
@@ -949,7 +1012,7 @@ public class MercadoPagoService : IMercadoPagoService
                         "mercadopago",
                         "payment",
                         paymentId,
-                        null,
+                        inferredOrderId,
                         raw!,
                         headers,
                         ct
@@ -981,7 +1044,7 @@ public class MercadoPagoService : IMercadoPagoService
                 "mercadopago",
                 "payment",
                 paymentId,
-                null,
+                inferredOrderId,
                 raw!,
                 headers,
                 ct
@@ -1048,17 +1111,24 @@ public class MercadoPagoService : IMercadoPagoService
         }
 
         using var paymentDoc = JsonDocument.Parse(paymentJson);
-        var root = paymentDoc.RootElement;
+        var paymentRoot = paymentDoc.RootElement;
 
-        var status = root.TryGetProperty("status", out var st) ? st.GetString() : null;
-        var statusDetail = root.TryGetProperty("status_detail", out var sd) ? sd.GetString() : null;
-        var rejectionReason = root.TryGetProperty("rejection_reason", out var rr)
+        var status = paymentRoot.TryGetProperty("status", out var st) ? st.GetString() : null;
+        var statusDetail = paymentRoot.TryGetProperty("status_detail", out var sd)
+            ? sd.GetString()
+            : null;
+        var rejectionReason = paymentRoot.TryGetProperty("rejection_reason", out var rr)
             ? rr.GetString()
             : null;
-        var orderId = root.TryGetProperty("external_reference", out var er) ? er.GetString() : null;
+        var orderId = paymentRoot.TryGetProperty(
+            "external_reference",
+            out var externalRefFromPayment
+        )
+            ? externalRefFromPayment.GetString()
+            : null;
         decimal? amount = null;
         if (
-            root.TryGetProperty("transaction_amount", out var ta)
+            paymentRoot.TryGetProperty("transaction_amount", out var ta)
             && ta.TryGetDecimal(out var amountValue)
         )
         {
@@ -1235,8 +1305,10 @@ public class MercadoPagoService : IMercadoPagoService
             try
             {
                 using var doc = JsonDocument.Parse(raw);
+                var orderParsedRoot = doc.RootElement;
+
                 if (
-                    doc.RootElement.TryGetProperty("data", out var data)
+                    orderParsedRoot.TryGetProperty("data", out var data)
                     && data.TryGetProperty("id", out var idEl)
                 )
                 {
@@ -1249,14 +1321,26 @@ public class MercadoPagoService : IMercadoPagoService
                         orderId = idEl.GetRawText();
                     }
                 }
+                else if (orderParsedRoot.TryGetProperty("resource", out var resourceEl))
+                {
+                    // resource may be string or number
+                    if (resourceEl.ValueKind == JsonValueKind.String)
+                        orderId = resourceEl.GetString();
+                    else if (resourceEl.ValueKind == JsonValueKind.Number)
+                        orderId = resourceEl.GetRawText();
+                }
+                else if (orderParsedRoot.TryGetProperty("id", out var idTop))
+                {
+                    if (idTop.ValueKind == JsonValueKind.String)
+                        orderId = idTop.GetString();
+                    else if (idTop.ValueKind == JsonValueKind.Number)
+                        orderId = idTop.GetRawText();
+                }
             }
             catch { }
         }
 
-        var headers = string.Join(
-            ";",
-            request.Headers.Select(h => $"{h.Key}:{string.Join(',', h.Value!)}")
-        );
+        var headers = Product.Common.Utilities.HeaderUtils.FormatHeaders(request.Headers);
 
         // signature validation (if configured)
         var signatureHeader = GetSignatureFromRequestHeaders(request);
