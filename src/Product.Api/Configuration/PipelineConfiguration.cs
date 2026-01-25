@@ -1,6 +1,7 @@
 using Hellang.Middleware.ProblemDetails;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Product.Api.Middlewares;
 using Serilog;
 
 namespace Product.Api.Configuration;
@@ -9,9 +10,9 @@ public static class PipelineConfiguration
 {
     public static WebApplication UseApiPipeline(this WebApplication app)
     {
-        app.UseMiddleware<Middlewares.CorrelationIdMiddleware>();
-        app.UseMiddleware<Middlewares.ExceptionLoggingMiddleware>();
-        app.UseMiddleware<Middlewares.RequestLoggingMiddleware>();
+        app.UseMiddleware<CorrelationIdMiddleware>();
+        app.UseMiddleware<ExceptionLoggingMiddleware>();
+        app.UseMiddleware<RequestLoggingMiddleware>();
         app.UseSerilogRequestLogging();
         app.UseProblemDetails();
         app.UseCors("Allowlist");

@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
 
 namespace Product.Api.Middlewares;
 
@@ -23,16 +21,30 @@ public class RequestLoggingMiddleware
         var correlationId = context.Items.ContainsKey(CorrelationIdMiddleware.HeaderName)
             ? context.Items[CorrelationIdMiddleware.HeaderName]
             : context.TraceIdentifier;
-        var userId = context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var userId = context
+            .User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+            ?.Value;
 
-        _logger.LogInformation("Request start: {Method} {Path} CorrelationId={CorrelationId} UserId={UserId}",
-            method, path, correlationId, userId);
+        _logger.LogInformation(
+            "Request start: {Method} {Path} CorrelationId={CorrelationId} UserId={UserId}",
+            method,
+            path,
+            correlationId,
+            userId
+        );
 
         await _next(context);
 
         sw.Stop();
         var status = context.Response?.StatusCode;
-        _logger.LogInformation("Request end: {Method} {Path} Status={Status} ElapsedMs={Elapsed} CorrelationId={CorrelationId} UserId={UserId}",
-            method, path, status, sw.ElapsedMilliseconds, correlationId, userId);
+        _logger.LogInformation(
+            "Request end: {Method} {Path} Status={Status} ElapsedMs={Elapsed} CorrelationId={CorrelationId} UserId={UserId}",
+            method,
+            path,
+            status,
+            sw.ElapsedMilliseconds,
+            correlationId,
+            userId
+        );
     }
 }

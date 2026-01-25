@@ -10,8 +10,7 @@ services:
     env_file:
       - .env.development
     environment:
-      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
-      - ConnectionStrings__DefaultConnection="${ConnectionStrings__DefaultConnection}"
+      - ASPNETCORE_ENVIRONMENT
     depends_on:
       - db
     restart: unless-stopped
@@ -19,13 +18,9 @@ services:
   db:
     container_name: PostgresDB
     env_file:
-      - .env
+      - .env.development
     image: postgres:16
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:

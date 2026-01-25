@@ -1,7 +1,3 @@
-using System.Diagnostics;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
-
 namespace Product.Api.Middlewares;
 
 public class ExceptionLoggingMiddleware
@@ -9,7 +5,10 @@ public class ExceptionLoggingMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionLoggingMiddleware> _logger;
 
-    public ExceptionLoggingMiddleware(RequestDelegate next, ILogger<ExceptionLoggingMiddleware> logger)
+    public ExceptionLoggingMiddleware(
+        RequestDelegate next,
+        ILogger<ExceptionLoggingMiddleware> logger
+    )
     {
         _next = next;
         _logger = logger;
@@ -27,12 +26,20 @@ public class ExceptionLoggingMiddleware
                 ? context.Items[CorrelationIdMiddleware.HeaderName]
                 : context.TraceIdentifier;
 
-            var userId = context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var userId = context
+                .User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+                ?.Value;
             var path = context.Request.Path;
             var method = context.Request.Method;
 
-            _logger.LogError(ex, "Unhandled exception while processing request {Method} {Path} CorrelationId={CorrelationId} UserId={UserId}",
-                method, path, correlationId, userId);
+            _logger.LogError(
+                ex,
+                "Unhandled exception while processing request {Method} {Path} CorrelationId={CorrelationId} UserId={UserId}",
+                method,
+                path,
+                correlationId,
+                userId
+            );
 
             throw;
         }

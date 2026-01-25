@@ -1,9 +1,9 @@
 using System.Globalization;
-using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Google.Apis.Auth;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
@@ -17,6 +17,7 @@ using Product.Business.Providers;
 using Product.Common.Enums;
 using Product.Contracts.Auth;
 using Product.Data.Interfaces.Repositories;
+using Product.Data.Models.Auth;
 using Product.Data.Models.Users;
 
 namespace Product.Business.Services.Auth;
@@ -32,6 +33,7 @@ public class AuthService : IAuthService
     private readonly IOptionsMonitor<Microsoft.AspNetCore.Authentication.BearerToken.BearerTokenOptions> _bearerOptions;
     private readonly IOptions<Product.Business.Options.GoogleAuthOptions> _googleOptions;
     private readonly ILogger<AuthService> _logger;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
@@ -42,7 +44,8 @@ public class AuthService : IAuthService
         IOptionsMonitor<Microsoft.AspNetCore.Authentication.BearerToken.BearerTokenOptions> bearerOptions,
         IOptions<Product.Business.Options.GoogleAuthOptions> googleOptions,
         ILogger<AuthService> logger,
-        IRolePromotionService rolePromotionService
+        IRolePromotionService rolePromotionService,
+        IHttpContextAccessor httpContextAccessor
     )
     {
         _userManager = userManager;
@@ -54,6 +57,7 @@ public class AuthService : IAuthService
         _googleOptions = googleOptions;
         _logger = logger;
         _rolePromotionService = rolePromotionService;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<ApiResult> SignUpApiAsync(SignupRequest request, CancellationToken ct)
@@ -69,7 +73,52 @@ public class AuthService : IAuthService
     )
     {
         await SignInAsync(request, useCookies, useSessionCookies);
-        return ApiResult.Ok(null);
+        // After signing in (cookie or not), also return bearer + refresh tokens as a fallback
+        var user = await _userManager.FindByEmailAsync(request.Email);
+        if (user is null)
+            return ApiResult.Ok(null);
+
+        var tokens = await CreateBearerTokensAsync(user);
+        // If client requested cookies, store refresh token in HttpOnly cookie and do not expose it in JSON
+        if (useCookies == true && _httpContextAccessor?.HttpContext != null)
+        {
+            try
+            {
+                var ctx = _httpContextAccessor.HttpContext;
+                var options = _bearerOptions.Get(IdentityConstants.BearerScheme);
+                var cookieOptions = new CookieOptions
+                {
+                    HttpOnly = true,
+                    Secure = true,
+                    SameSite = SameSiteMode.None,
+                    Path = "/",
+                };
+                if (useSessionCookies != true)
+                {
+                    cookieOptions.Expires = DateTimeOffset.UtcNow.Add(
+                        options.RefreshTokenExpiration
+                    );
+                }
+
+                if (!string.IsNullOrWhiteSpace(tokens.refreshToken))
+                    ctx.Response.Cookies.Append("refreshToken", tokens.refreshToken, cookieOptions);
+
+                return ApiResult.Ok(null);
+            }
+            catch
+            {
+                // ignore cookie failures and fallback to returning tokens in body
+            }
+        }
+
+        return ApiResult.Ok(
+            new
+            {
+                tokens.accessToken,
+                tokens.refreshToken,
+                tokens.expiresIn,
+            }
+        );
     }
 
     public async Task<ApiResult> SignOutApiAsync()
@@ -80,6 +129,23 @@ public class AuthService : IAuthService
 
     public async Task<ApiResult> RefreshApiAsync(RefreshRequest request)
     {
+        // If caller didn't include refresh token in body, try to read it from HttpOnly cookie
+        if (
+            (request is null || string.IsNullOrWhiteSpace(request.RefreshToken))
+            && _httpContextAccessor?.HttpContext?.Request?.Cookies != null
+            && _httpContextAccessor.HttpContext.Request.Cookies.TryGetValue(
+                "refreshToken",
+                out var cookieRefresh
+            )
+            && !string.IsNullOrWhiteSpace(cookieRefresh)
+        )
+        {
+            request = new RefreshRequest { RefreshToken = cookieRefresh };
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.RefreshToken))
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_refresh_token");
+
         await RefreshAsync(request);
         return ApiResult.Ok(null);
     }
@@ -117,12 +183,114 @@ public class AuthService : IAuthService
         try
         {
             await GoogleLoginAsync(request, useCookies, useSessionCookies);
-            return ApiResult.Ok(null);
+
+            // Re-validate id token to obtain email and return tokens as fallback
+            var payload = await GoogleJsonWebSignature.ValidateAsync(
+                request.IdToken,
+                new GoogleJsonWebSignature.ValidationSettings
+                {
+                    Audience = [_googleOptions.Value.ClientId],
+                }
+            );
+
+            var email = payload?.Email;
+            if (string.IsNullOrWhiteSpace(email))
+                return ApiResult.Ok(null);
+
+            var user = await _userManager.FindByEmailAsync(email);
+            if (user is null)
+                return ApiResult.Ok(null);
+
+            var tokens = await CreateBearerTokensAsync(user);
+            // If client requested cookies, store refresh token in HttpOnly cookie and do not expose it in JSON
+            if (useCookies == true && _httpContextAccessor?.HttpContext != null)
+            {
+                try
+                {
+                    var ctx = _httpContextAccessor.HttpContext;
+                    var options = _bearerOptions.Get(IdentityConstants.BearerScheme);
+                    var cookieOptions = new CookieOptions
+                    {
+                        HttpOnly = true,
+                        Secure = true,
+                        SameSite = SameSiteMode.None,
+                        Path = "/",
+                    };
+                    if (useSessionCookies != true)
+                    {
+                        cookieOptions.Expires = DateTimeOffset.UtcNow.Add(
+                            options.RefreshTokenExpiration
+                        );
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(tokens.refreshToken))
+                        ctx.Response.Cookies.Append(
+                            "refreshToken",
+                            tokens.refreshToken,
+                            cookieOptions
+                        );
+
+                    // When using cookies, do not return any bearer tokens in the response body.
+                    return ApiResult.Ok(null);
+                }
+                catch
+                {
+                    // ignore cookie failures and fallback to returning tokens in body
+                }
+            }
+
+            return ApiResult.Ok(
+                new
+                {
+                    tokens.accessToken,
+                    tokens.refreshToken,
+                    tokens.expiresIn,
+                }
+            );
         }
         catch (UnauthorizedAccessException)
         {
             return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_google_token");
         }
+    }
+
+    private async Task<(
+        string accessToken,
+        string refreshToken,
+        int expiresIn
+    )> CreateBearerTokensAsync(ApplicationUser user)
+    {
+        var options = _bearerOptions.Get(IdentityConstants.BearerScheme);
+
+        var principal = await _signInManager.CreateUserPrincipalAsync(user);
+
+        var accessProperties = new AuthenticationProperties
+        {
+            ExpiresUtc = DateTimeOffset.UtcNow.Add(options.BearerTokenExpiration),
+            IsPersistent = false,
+        };
+
+        var accessTicket = new AuthenticationTicket(
+            principal,
+            accessProperties,
+            IdentityConstants.BearerScheme
+        );
+        var accessToken = options.BearerTokenProtector.Protect(accessTicket);
+
+        var refreshProperties = new AuthenticationProperties
+        {
+            ExpiresUtc = DateTimeOffset.UtcNow.Add(options.RefreshTokenExpiration),
+            IsPersistent = false,
+        };
+        var refreshTicket = new AuthenticationTicket(
+            principal,
+            refreshProperties,
+            IdentityConstants.BearerScheme
+        );
+        var refreshToken = options.RefreshTokenProtector.Protect(refreshTicket);
+
+        var expiresIn = (int)options.BearerTokenExpiration.TotalSeconds;
+        return (accessToken, refreshToken, expiresIn);
     }
 
     public async Task<ApiResult> ForgotPasswordApiAsync(
@@ -509,13 +677,21 @@ public class AuthService : IAuthService
 
         if (!string.Equals(user.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning("SignIn failed: user inactive UserId={UserId} Email={Email}", user.Id, request.Email);
+            _logger.LogWarning(
+                "SignIn failed: user inactive UserId={UserId} Email={Email}",
+                user.Id,
+                request.Email
+            );
             throw new InvalidOperationException("user_inactive");
         }
 
         if (!user.EmailConfirmed)
         {
-            _logger.LogWarning("SignIn failed: email not confirmed UserId={UserId} Email={Email}", user.Id, request.Email);
+            _logger.LogWarning(
+                "SignIn failed: email not confirmed UserId={UserId} Email={Email}",
+                user.Id,
+                request.Email
+            );
             throw new InvalidOperationException("email_not_confirmed");
         }
 
@@ -536,16 +712,29 @@ public class AuthService : IAuthService
 
         if (result.IsLockedOut)
         {
-            _logger.LogWarning("SignIn failed: user locked out UserId={UserId} Email={Email}", user.Id, request.Email);
+            _logger.LogWarning(
+                "SignIn failed: user locked out UserId={UserId} Email={Email}",
+                user.Id,
+                request.Email
+            );
             throw new InvalidOperationException("user_locked_out");
         }
         if (!result.Succeeded)
         {
-            _logger.LogWarning("SignIn failed: invalid credentials UserId={UserId} Email={Email}", user.Id, request.Email);
+            _logger.LogWarning(
+                "SignIn failed: invalid credentials UserId={UserId} Email={Email}",
+                user.Id,
+                request.Email
+            );
             throw new UnauthorizedAccessException("invalid_credentials");
         }
 
-        _logger.LogInformation("SignIn success: UserId={UserId} Email={Email} Persistent={IsPersistent}", user.Id, request.Email, isPersistent);
+        _logger.LogInformation(
+            "SignIn success: UserId={UserId} Email={Email} Persistent={IsPersistent}",
+            user.Id,
+            request.Email,
+            isPersistent
+        );
     }
 
     public async Task SignOutAsync()
