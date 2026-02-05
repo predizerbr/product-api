@@ -14,7 +14,9 @@ public static class CorsConfiguration
             "https://genuine-husky-secondly.ngrok-free.app",
             "https://cladocarpous-cryptogrammatical-yasmin.ngrok-free.dev",
             "https://predizer.com.br",
+            "https://www.predizer.com.br",
             "https://predizerapi.onrender.com",
+            "https://www.predizerapi.onrender.com"
         };
 
         services.AddCors(o =>
