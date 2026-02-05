@@ -16,7 +16,6 @@ public static class CorsConfiguration
             "https://predizer.com.br",
             "https://www.predizer.com.br",
             "https://predizerapi.onrender.com",
-            "https://www.predizerapi.onrender.com"
         };
 
         services.AddCors(o =>
