@@ -15,7 +15,6 @@ public static class CorsConfiguration
             "https://cladocarpous-cryptogrammatical-yasmin.ngrok-free.dev",
             "https://predizer.com.br",
             "https://www.predizer.com.br",
-            "https://predizerapi.onrender.com",
         };
 
         services.AddCors(o =>

@@ -15,6 +15,7 @@ public static class PipelineConfiguration
         app.UseMiddleware<RequestLoggingMiddleware>();
         app.UseSerilogRequestLogging();
         app.UseProblemDetails();
+        app.UseRouting();
         app.UseCookiePolicy();
         app.UseCors("Allowlist");
         app.UseAuthentication();
