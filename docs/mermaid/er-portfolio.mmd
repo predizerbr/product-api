@@ -1,0 +1,70 @@
+erDiagram
+    ASPNETUSERS {
+      uuid Id PK
+    }
+
+    MARKETS {
+      uuid Id PK
+      string Title
+      string Status
+      datetime ClosingDate
+      datetime ResolvedAt
+      string ResolvedOutcome
+    }
+
+    POSITIONS {
+      uuid Id PK
+      uuid UserId FK
+      uuid MarketId FK
+      string Side
+      int Contracts
+      decimal AveragePrice
+      decimal TotalInvested
+      decimal FeesPaid
+      string Status
+      datetime OpenedAt
+      datetime UpdatedAt
+      datetime ClosedAt
+      decimal RealizedPnl
+    }
+
+    POSITIONFILLS {
+      uuid Id PK
+      uuid PositionId FK
+      uuid UserId FK
+      uuid MarketId FK
+      string Side
+      string Type
+      int Contracts
+      decimal Price
+      decimal GrossAmount
+      decimal FeeAmount
+      decimal NetAmount
+      string Source
+      uuid OrderId
+      string IdempotencyKey
+      datetime CreatedAt
+    }
+
+    PORTFOLIOSNAPSHOTS {
+      uuid Id PK
+      uuid UserId FK
+      datetime AsOf
+      int ActivePositions
+      decimal TotalInvestedActive
+      decimal TotalInvestedAllTime
+      decimal RealizedPnlAllTime
+      decimal PotentialPnlActive
+      int ClosedMarkets
+      int Wins
+      decimal AccuracyRate
+    }
+
+    ASPNETUSERS ||--o{ POSITIONS : logical_user_id
+    MARKETS ||--o{ POSITIONS : logical_market_id
+
+    POSITIONS ||--o{ POSITIONFILLS : fills
+    ASPNETUSERS ||--o{ POSITIONFILLS : logical_user_id
+    MARKETS ||--o{ POSITIONFILLS : logical_market_id
+
+    ASPNETUSERS ||--o{ PORTFOLIOSNAPSHOTS : logical_user_id

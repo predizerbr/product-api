@@ -56,6 +56,25 @@ public class WalletService : IWalletService
         return ApiResult.Ok(result.Data, envelope: true);
     }
 
+    public async Task<ApiResult> GetSummaryApiAsync(
+        ClaimsPrincipal principal,
+        CancellationToken ct = default
+    )
+    {
+        if (!TryGetUserId(principal, out var userId))
+        {
+            return ApiResult.Problem(StatusCodes.Status401Unauthorized, "invalid_token");
+        }
+
+        var result = await GetSummaryAsync(userId, ct);
+        if (!result.Success)
+        {
+            return ApiResult.Problem(StatusCodes.Status400BadRequest, result.Error ?? "unknown");
+        }
+
+        return ApiResult.Ok(result.Data, envelope: true);
+    }
+
     public async Task<ApiResult> GetLedgerApiAsync(
         ClaimsPrincipal principal,
         string? cursor,
@@ -406,6 +425,38 @@ public class WalletService : IWalletService
             .ToList();
 
         return ServiceResult<IReadOnlyCollection<WalletBalanceResponse>>.Ok(result);
+    }
+
+    public async Task<ServiceResult<WalletSummaryResponse>> GetSummaryAsync(
+        Guid userId,
+        CancellationToken ct = default
+    )
+    {
+        var accounts = await EnsureAccountsAsync(userId, ct);
+        var primaryCurrency =
+            accounts.FirstOrDefault(a => a.Currency == DefaultCurrency)?.Currency ?? DefaultCurrency;
+
+        var totalDeposited = await _walletRepository.GetTotalDepositedAsync(
+            userId,
+            primaryCurrency,
+            ct
+        );
+        var totalWithdrawn = await _walletRepository.GetTotalWithdrawnAsync(
+            userId,
+            primaryCurrency,
+            ct
+        );
+        var totalBought = await _walletRepository.GetTotalBoughtAsync(userId, ct);
+
+        var response = new WalletSummaryResponse
+        {
+            Currency = primaryCurrency,
+            TotalDeposited = Math.Round(totalDeposited, 2, MidpointRounding.AwayFromZero),
+            TotalWithdrawn = Math.Round(totalWithdrawn, 2, MidpointRounding.AwayFromZero),
+            TotalBought = Math.Round(totalBought, 2, MidpointRounding.AwayFromZero),
+        };
+
+        return ServiceResult<WalletSummaryResponse>.Ok(response);
     }
 
     public async Task<ServiceResult<LedgerListResponse>> GetLedgerAsync(

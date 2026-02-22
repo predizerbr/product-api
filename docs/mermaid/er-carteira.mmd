@@ -1,0 +1,68 @@
+erDiagram
+    ASPNETUSERS {
+      uuid Id PK
+    }
+
+    MARKETS {
+      uuid Id PK
+      string Title
+    }
+
+    ACCOUNTS {
+      uuid Id PK
+      uuid UserId FK
+      string Currency
+    }
+
+    LEDGERENTRIES {
+      uuid Id PK
+      uuid AccountId FK
+      string Type
+      decimal Amount
+      string ReferenceType
+      uuid ReferenceId
+      string IdempotencyKey
+    }
+
+    PAYMENTINTENTS {
+      uuid Id PK
+      uuid UserId FK
+      string Provider
+      decimal Amount
+      string Currency
+      string Status
+      string ExternalPaymentId
+      string ExternalReference
+      string IdempotencyKey
+    }
+
+    WITHDRAWALS {
+      uuid Id PK
+      uuid UserId FK
+      decimal Amount
+      string Currency
+      string Status
+      datetime ApprovedAt
+      uuid ApprovedByUserId
+      string IdempotencyKey
+    }
+
+    RECEIPTS {
+      uuid Id PK
+      uuid UserId
+      uuid PaymentIntentId
+      uuid MarketId
+      decimal Amount
+      string Type
+      string Currency
+      string ReferenceType
+      uuid ReferenceId
+    }
+
+    ASPNETUSERS ||--o{ ACCOUNTS : owns
+    ACCOUNTS ||--o{ LEDGERENTRIES : entries
+    ASPNETUSERS ||--o{ PAYMENTINTENTS : creates
+    ASPNETUSERS ||--o{ WITHDRAWALS : requests
+    ASPNETUSERS ||--o{ RECEIPTS : logical_user_id
+    PAYMENTINTENTS ||--o{ RECEIPTS : logical_payment_intent_id
+    MARKETS ||--o{ RECEIPTS : logical_market_id

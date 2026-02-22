@@ -1,0 +1,82 @@
+erDiagram
+    ASPNETUSERS {
+      uuid Id PK
+      string Name
+      string Email
+      string UserName
+      string Role
+      string Status
+    }
+
+    USERPERSONALDATA {
+      uuid Id PK
+      uuid UserId FK
+      string Cpf
+      string PhoneNumber
+    }
+
+    USERADDRESSES {
+      uuid Id PK
+      uuid PersonalDataId FK
+      string ZipCode
+      string Street
+      string City
+      string State
+      string Country
+    }
+
+    EMAILVERIFICATIONTOKENS {
+      uuid Id PK
+      uuid UserId FK
+      string TokenHash
+      datetime ExpiresAt
+      datetime UsedAt
+    }
+
+    PASSWORDRESETTOKENS {
+      uuid Id PK
+      uuid UserId FK
+      string TokenHash
+      datetime ExpiresAt
+      datetime UsedAt
+    }
+
+    REFRESHTOKENS {
+      uuid Id PK
+      uuid UserId
+      string TokenHash
+      datetime ExpiresAt
+      datetime RevokedAt
+    }
+
+    USERCARDS {
+      uuid Id PK
+      uuid UserId FK
+      string CardBrand
+      string CardLast4
+      bool IsDefault
+    }
+
+    USERBANKACCOUNTS {
+      uuid Id PK
+      uuid UserId FK
+      string BankCode
+      string AccountNumber
+      bool IsDefault
+    }
+
+    USERPIXKEYS {
+      uuid Id PK
+      uuid UserId FK
+      string PixKey
+      bool IsDefault
+    }
+
+    ASPNETUSERS ||--o| USERPERSONALDATA : personal_data
+    USERPERSONALDATA ||--o| USERADDRESSES : address
+    ASPNETUSERS ||--o{ EMAILVERIFICATIONTOKENS : email_verification_tokens
+    ASPNETUSERS ||--o{ PASSWORDRESETTOKENS : password_reset_tokens
+    ASPNETUSERS ||--o{ USERCARDS : cards
+    ASPNETUSERS ||--o{ USERBANKACCOUNTS : bank_accounts
+    ASPNETUSERS ||--o{ USERPIXKEYS : pix_keys
+    ASPNETUSERS ||--o{ REFRESHTOKENS : logical_user_id

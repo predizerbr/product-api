@@ -1,0 +1,75 @@
+erDiagram
+    ASPNETUSERS {
+      uuid Id PK
+    }
+
+    MARKETS {
+      uuid Id PK
+      string Title
+      string Status
+      decimal YesPrice
+      decimal NoPrice
+      decimal VolumeTotal
+      datetime ClosingDate
+    }
+
+    CATEGORIES {
+      int Id PK
+      string Name
+      string Slug
+    }
+
+    MARKETCATEGORIES {
+      uuid Id PK
+      uuid MarketId FK
+      int CategoryId FK
+    }
+
+    POSITIONS {
+      uuid Id PK
+      uuid MarketId
+      uuid UserId
+      string Side
+      int Contracts
+      decimal AveragePrice
+      decimal TotalInvested
+      string Status
+    }
+
+    MARKETTRANSACTIONS {
+      uuid Id PK
+      uuid UserId
+      uuid MarketId
+      string Type
+      decimal Amount
+      decimal NetAmount
+    }
+
+    RISKTERMS {
+      uuid Id PK
+      uuid UserId
+      uuid MarketId
+      string TermVersion
+      datetime AcceptedAt
+    }
+
+    IDEMPOTENCYRECORDS {
+      uuid Id PK
+      string Key
+      uuid UserId
+      string ResultPayload
+    }
+
+    MARKETS ||--o{ MARKETCATEGORIES : categorizes
+    CATEGORIES ||--o{ MARKETCATEGORIES : categorizes
+
+    ASPNETUSERS ||--o{ POSITIONS : logical_user_id
+    MARKETS ||--o{ POSITIONS : logical_market_id
+
+    ASPNETUSERS ||--o{ MARKETTRANSACTIONS : logical_user_id
+    MARKETS ||--o{ MARKETTRANSACTIONS : logical_market_id
+
+    ASPNETUSERS ||--o{ RISKTERMS : logical_user_id
+    MARKETS ||--o{ RISKTERMS : logical_market_id
+
+    ASPNETUSERS ||--o{ IDEMPOTENCYRECORDS : logical_user_id

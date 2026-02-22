@@ -22,6 +22,13 @@ public class WalletController(IWalletService walletService, IReceiptService rece
         return this.ToActionResult(result);
     }
 
+    [HttpGet("summary")]
+    public async Task<IActionResult> GetSummary(CancellationToken ct)
+    {
+        var result = await _walletService.GetSummaryApiAsync(User, ct);
+        return this.ToActionResult(result);
+    }
+
     [HttpGet("ledger")]
     public async Task<IActionResult> GetLedger(
         [FromQuery] string? cursor,

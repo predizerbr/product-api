@@ -1,0 +1,488 @@
+# Explicacao do projeto: product-api
+
+Arquivo gerado a partir do codigo atual para explicar as estruturas de entidade e o que ja e possivel fazer com a API.
+
+## 1) Visao geral
+Este repo e uma API .NET 8 com arquitetura em camadas:
+- Product.Api: entrada HTTP (controllers), configuracao de DI, middlewares, Swagger, SignalR.
+- Product.Business: regras de negocio, validacoes (FluentValidation), servicos e fluxos.
+- Product.Data: EF Core + PostgreSQL, entidades, configuracoes e migracoes.
+- Product.Contracts: DTOs de request/response usados pela API.
+- Product.Common: enums e entidades base.
+
+Tecnologias principais:
+- ASP.NET Core + Identity (tokens bearer + cookies)
+- EF Core com Postgres
+- Serilog (logs)
+- FluentValidation
+- SignalR (notificacoes em tempo real)
+- Integracao Mercado Pago (PIX e cartao)
+
+## 2) Estrutura por projeto
+Product.Api
+- Program.cs: bootstrap, DI, pipeline, SignalR hub e seeding inicial.
+- Configuration/: DI, Swagger, CORS, Auth/Identity, Cookie policy, pipeline.
+- Controllers/: endpoints HTTP (com PortfolioController).
+- Middlewares/: correlacao, logs e captura de erros.
+- Hubs/: SignalR (MarketHub).
+- Services/: implementacoes de adaptadores (notificador e leitura de termos).
+- Serialization/: conversor de decimal para string no JSON.
+
+Product.Business
+- Services/: regras de negocio (Auth, Users, Markets, Wallet, Portfolio, Payments, Email, Audit).
+- Interfaces/: contratos de servicos (com Portfolio).
+- Validators/: validacoes de requests.
+- Options/: classes de configuracao.
+- BackgroundServices/: tarefas periodicas (fila de email e manutencao).
+
+Product.Data
+- Models/: entidades EF Core (com Models/Portfolio).
+- Configurations/: configuracoes EF Core (indices, precisao, relacionamentos; com Portfolio).
+- Repositories/: acesso a dados e queries (com PortfolioRepository).
+- Database/Contexts/: DbContext (parcial por area; com AppDbContext.Portfolio) e configuracao de enums.
+- Migrations/: migracoes do banco.
+
+Product.Contracts
+- DTOs de Auth, Users, Wallet, Portfolio, Markets, Payments e Admin.
+- ResponseEnvelope para padrao de resposta.
+
+Product.Common
+- Entidades base (Id, CreatedAt, UpdatedAt).
+- Enums do dominio.
+
+## 3) Entidades e estruturas (Product.Data/Models)
+Observacao: toda entidade que herda de Entity<T> possui Id, CreatedAt e UpdatedAt.
+
+### 3.1) Usuarios e autenticacao
+ApplicationUser (Users)
+- Base: IdentityUser<Guid> + CreatedAt/UpdatedAt (AuditedUserEntity)
+- Campos: Name, AvatarUrl, UserName, NormalizedUserName, Role (lista), RoleRaw (coluna),
+  Email, NormalizedEmail, EmailConfirmed, EmailVerifiedAt, PhoneNumber, PasswordHash,
+  SecurityStamp, ConcurrencyStamp, TwoFactorEnabled, LockoutEnd, LockoutEnabled,
+  AccessFailedCount, Status
+- Relacoes: PersonalData (1:1)
+
+UserPersonalData (Users)
+- Campos: UserId, Cpf, PhoneNumber
+- Relacoes: User (1:1), Address (1:1)
+
+UserAddress (Users)
+- Campos: PersonalDataId, ZipCode, Street, Neighborhood, Number, Complement,
+  City, State, Country
+- Relacoes: PersonalData (1:1)
+
+RefreshToken (Auth)
+- Campos: UserId, TokenHash, ExpiresAt, RevokedAt, DeviceInfo
+
+PasswordResetToken (Auth)
+- Campos: UserId, TokenHash, ExpiresAt, UsedAt
+- Relacoes: User
+
+EmailVerificationToken (Auth)
+- Campos: UserId, TokenHash, ExpiresAt, UsedAt
+- Relacoes: User
+
+### 3.2) Metodos de pagamento do usuario
+UserCard (Users/PaymentsMethods)
+- Campos: UserId, CardBrand, CardLast4, CardExpMonth, CardExpYear, CardHolderName,
+  MpCustomerId, MpCardId, MpPaymentMethodId, CardHolderDocumentType,
+  CardHolderDocumentNumber, CardHolderDocumentLast4, IsDefault
+- Relacoes: User
+
+UserBankAccount (Users/PaymentsMethods)
+- Campos: UserId, BankCode, BankName, Agency, AccountNumber, AccountDigit,
+  AccountType, IsDefault
+- Relacoes: User
+
+UserPixKey (Users/PaymentsMethods)
+- Campos: UserId, PixKey, IsDefault
+- Relacoes: User
+
+### 3.3) Wallet (carteira, ledger e recibos)
+Account (Wallet)
+- Campos: UserId, Currency
+- Relacoes: User, LedgerEntries (1:N)
+
+LedgerEntry (Wallet)
+- Campos: AccountId, Type (LedgerEntryType), Amount, ReferenceType, ReferenceId,
+  IdempotencyKey, MetaJson
+- Relacoes: Account
+
+PaymentIntent (Wallet)
+- Campos: UserId, Provider, Amount, Currency, Status (PaymentIntentStatus),
+  ExternalPaymentId, ExternalReference, IdempotencyKey, PaymentMethod,
+  PixQrCode, PixQrCodeBase64, CheckoutUrl, ExpiresAt
+- Relacoes: User
+
+Receipt (Wallet)
+- Campos: UserId, Type, Amount, Currency, Provider, ProviderPaymentId,
+  ProviderPaymentIdText, ExternalPaymentId, PaymentIntentId, PaymentMethod,
+  PaymentExpiresAt, CheckoutUrl, MarketId, MarketTitleSnapshot, MarketSlugSnapshot,
+  Description, ReferenceType, ReferenceId, PayloadJson
+
+Withdrawal (Wallet)
+- Campos: UserId, Amount, Currency, Status (WithdrawalStatus), ApprovedAt,
+  ApprovedByUserId, Notes, IdempotencyKey
+- Relacoes: User
+
+### 3.4) Markets (mercados e trading)
+Market (Markets)
+- Campos: Title, Description, Category, ClosingDate, Status, YesPrice, NoPrice,
+  VolumeTotal, YesContracts, NoContracts, Volume24h, Volatility24h, RowVersion,
+  Tags, Featured, CreatedBy, CreatorEmail, ResolutionDate, ResolutionSource,
+  LowLiquidityWarning, ProbabilityBucket, SearchSnippet
+
+Category (Markets/Categories)
+- Campos: Name, Slug
+
+MarketCategory (Markets)
+- Campos: MarketId, CategoryId
+- Relacoes: Market, Category
+
+Position (Markets)
+- Campos: MarketId, UserId, Side, Contracts, AveragePrice, TotalInvested, Status
+
+Transaction (Markets)
+- Campos: UserId, Type (buy/sell/fee), Amount, NetAmount, MarketId, Description
+
+RiskTerms (Markets)
+- Campos: UserId, MarketId, TermVersion, TermSnapshot, TermHash, IpAddress,
+  UserAgent, AcceptedAt
+
+IdempotencyRecord (Markets)
+- Campos: Key, UserId, ResultPayload
+
+### 3.5) Pedidos, webhooks e auditoria
+Order (Orders)
+- Campos: OrderId, Amount, Currency, Provider, ProviderPaymentId, ProviderPaymentIdText,
+  ExpiresAtUtc, Status, StatusDetail, PaymentMethod
+
+MPWebhookEvent (Webhooks)
+- Campos: Provider, EventType, ProviderPaymentId, OrderId, Payload, PayloadHash,
+  Headers, SignatureHeader, ResponseStatusCode, ProcessingDurationMs, ReceivedAt,
+  Processed, ProcessedAt, AttemptCount, ProcessingResult
+
+AuditLog (Audit)
+- Campos: UserId, Action, Entity, EntityId, MetaJson, Ip, UserAgent
+
+### 3.6) Emails (fila e templates)
+QueuedEmail (Emails)
+- Campos: ToEmail, ToName, Subject, HtmlBody, TextBody, AttemptCount, SentAt, LastError
+
+EmailMessage (Emails)
+- Record com ToEmail, ToName, Subject, HtmlBody, TextBody
+
+Modelos de template (Emails)
+- ChangeEmailModel: UserName, ConfirmUrl
+- ConfirmationEmailModel: UserName, ConfirmUrl
+- ForgotPasswordEmailModel: UserName, ResetCode
+- ResetPasswordConfirmationModel: UserName
+
+### 3.7) Portfolio (posicoes, fills e snapshots)
+PositionFill (Portfolio)
+- Campos: PositionId, UserId, MarketId, Side, Type, Contracts, Price, GrossAmount,
+  FeeAmount, NetAmount, Source, OrderId, IdempotencyKey
+- Uso: historico de fills por posicao (BUY/SELL), com origem e idempotencia.
+
+PortfolioSnapshot (Portfolio)
+- Campos: UserId, AsOf, ActivePositions, TotalInvestedActive, TotalInvestedAllTime,
+  RealizedPnlAllTime, PotentialPnlActive, ClosedMarkets, Wins, AccuracyRate
+- Uso: snapshot agregado do portfolio gerado em leitura de summary (best-effort).
+
+## 4) Relacionamentos e indices principais (Product.Data/Configurations)
+Usuarios
+- UserPersonalData: CPF unico; 1:1 com ApplicationUser; 1:1 com UserAddress (cascade).
+- UserAddress: PersonalDataId unico.
+- RefreshToken: TokenHash unico; tabela AspNetUserRefreshTokens.
+- PasswordResetToken/EmailVerificationToken: TokenHash unico; index (UserId, ExpiresAt);
+  cascade com User.
+
+Wallet
+- Account: unique (UserId, Currency); cascade com User.
+- LedgerEntry: unique IdempotencyKey; index (AccountId, CreatedAt); cascade com Account.
+- PaymentIntent: unique IdempotencyKey; index ExternalPaymentId; ExternalReference;
+  index (UserId, CreatedAt); cascade com User.
+- Withdrawal: unique IdempotencyKey; index (UserId, CreatedAt); cascade com User.
+
+Markets
+- Market: YesPrice/NoPrice/VolumeTotal com precisao 18,6; RowVersion como concurrency.
+- Position: index (UserId, MarketId, Side).
+- Transaction: Amount/NetAmount com precisao 18,6.
+- IdempotencyRecord: unique (Key, UserId).
+
+Portfolio
+- PositionFill: historico de fills por usuario/mercado/posicao; suporte a paginacao por CreatedAt.
+- PortfolioSnapshot: snapshots agregados por usuario e instante (AsOf) para cards de portfolio.
+
+Orders/Webhooks/Emails
+- Order: indices em ProviderPaymentId, ProviderPaymentIdText e OrderId.
+- MPWebhookEvent: index ProviderPaymentId e PayloadHash unico.
+- QueuedEmail: indices em SentAt e (SentAt, CreatedAt).
+
+Auditoria
+- AuditLog: index CreatedAt.
+
+Observacao global
+- Enums sao persistidos como string por conversao global em AppDbContext.
+
+## 5) Enums principais (Product.Common/Enums)
+- RoleName: USER, ADMIN_L1, ADMIN_L2, ADMIN_L3
+- PaymentMethodType: PIX, CARD, BANK_ACCOUNT
+- LedgerEntryType: DEPOSIT_GATEWAY, WITHDRAW_REQUEST, MARKET_BUY, PAYOUT, FEE
+- PaymentIntentStatus: PENDING, APPROVED, REJECTED, EXPIRED
+- WithdrawalStatus: REQUESTED, APPROVED, REJECTED, PAID, CANCELED
+
+## 6) O que ja e possivel fazer com o codigo (funcionalidades)
+Autenticacao e conta
+- Criar conta (sign-up), login, logout e refresh de token.
+- Confirmacao de email (link com shortCode) e reenvio de confirmacao.
+- Recuperacao de senha: envio de codigo, verificacao e reset de senha.
+- Login com Google.
+- Gerenciar dados da conta (info, 2FA, senha, logins externos).
+
+Usuarios
+- Obter dados do usuario autenticado (/me).
+- Atualizar perfil (nome, email/username, etc).
+- Atualizar endereco e avatar.
+- Listar sessoes ativas e revogar sessao.
+- Admin: listar usuarios (filtro/paginacao) e alternar roles.
+
+Markets (mercados de probabilidade)
+- Explorar mercados com filtros e ordenacao.
+- Buscar mercados por titulo.
+- Obter detalhes de mercado e historico (snapshot simples).
+- Criar/editar/deletar mercados (admins L2+).
+- Comprar contratos (yes/no) com validacao de saldo.
+- Idempotencia para criacao e compra (Idempotency-Key).
+- Atualizacao e notificacao via SignalR (MarketUpdated, BalanceUpdated).
+
+Termos de risco
+- Obter termos (versao default v1) e aceitar termos para um mercado.
+- Consultar aceite do usuario e baixar comprovante em PDF.
+- Template de termos via arquivo em Resources/terms/risk.
+
+Wallet
+- Ver saldos por moeda (BRL).
+- Ver extrato (ledger) com paginacao por cursor.
+- Criar intent de deposito (PIX Mercado Pago) com idempotencia.
+- Listar depositos e suas situacoes.
+- Solicitar saque (withdrawal) com validacao de saldo.
+- Listar saques e status.
+- Admin aprova/rejeita saque.
+- Gerar recibos de deposito, saque e compra.
+- Backfill de recibos (deposito e compra) via tarefa de manutencao.
+
+Portfolio
+- Ver resumo do portfolio com cards (scope active/all-time).
+- Ver lista de posicoes com filtros (status, side, search) e paginacao.
+- Ver historico de fills com filtro opcional por marketId e paginacao.
+- Snapshot de portfolio e gravado em leitura de summary (best-effort).
+
+Pagamentos (Mercado Pago)
+- Criar pagamento PIX e obter QR Code.
+- Criar ordem de cartao (tokenizado ou cartao salvo).
+- Salvar cartao do usuario (MP customer/card id).
+- Consultar status de pagamento/ordem.
+- Processar webhooks do Mercado Pago.
+
+Email
+- Fila persistente de emails (QueuedEmail) e envio via SMTP.
+- Background service para processar fila.
+
+Auditoria
+- Registrar logs de acoes (AuditLog).
+
+## 7) Endpoints principais (Product.Api/Controllers)
+AuthController (/api/v1/auth)
+- POST sign-up, sign-in, sign-out, refresh
+- POST confirmEmail (shortCode)
+- GET /confirm-email/{shortCode} (redirect)
+- POST resendConfirmationEmail, resend-reset-code
+- POST sign-in/google
+- POST forgotPassword, resetPassword, verify-reset-code
+- GET/POST manage/info
+- GET/POST manage/2fa
+- GET manage/external-login
+- POST manage/password
+
+UsersController (/api/v1/users)
+- GET me
+- PUT me (perfil)
+- PUT me/address
+- PUT me/avatar
+- GET me/sessions
+- DELETE me/sessions/{id}
+
+AdminUsersController (/api/v1/admin/users)
+- GET listagem de usuarios
+- POST {userId}/role/toggle
+
+MarketsController (/api/v1/markets)
+- GET listar/explorar
+- GET search
+- GET {marketId}
+- GET {marketId}/history
+- GET market-categories
+- GET {marketId}/market-categories
+- POST trade (buy)
+- POST create-market (admin L2+)
+- PUT {marketId} (admin L2+)
+- DELETE {marketId} (admin L2+)
+
+RiskTermsController (/api/v1/terms)
+- GET risk-terms
+- POST risk-acceptance
+- GET risk-acceptance
+- GET risk-acceptance/download
+
+WalletController (/api/v1/wallet)
+- GET balances
+- GET ledger
+- POST deposits/intent
+- GET deposits
+- POST withdrawals
+- GET withdrawals
+- GET receipts
+- GET receipts/{receiptId}
+- POST withdrawals/{id}/approve (admin L2+)
+- POST withdrawals/{id}/reject (admin L2+)
+
+PortfolioController (/api/v1/portfolio)
+- GET summary
+- GET positions
+- GET fills
+
+PaymentsController (/api/v1/payments)
+- GET methods
+- POST methods (pix, bank, card ou cartao tokenizado)
+- DELETE methods/{id}
+
+MercadoPagoCheckoutApiController (/api/v1/payments/mercadopago)
+- POST orders/card
+- GET orders/{orderIdOrMpId}/status
+- POST pix
+- GET status/{paymentId}
+
+MercadoPagoWebhookController (/api/v1/webhooks/mercadopago)
+- POST webhook de pagamentos
+
+## 8) Servicos internos e regras importantes
+- AuthService: cria usuario, login, tokens, confirma email, reset de senha, Google login.
+- UserService: perfil, endereco, avatar, sessoes, auditoria de alteracoes.
+- RolePromotionService: promove/demove roles e admin levels.
+- MarketService: regras de preco, compra, idempotencia e criacao de mercado; em compra grava PositionFill.
+- CategoryService: cria categorias default e associa mercado.
+- RiskTermsService: resolve template, grava aceite e gera PDF.
+- WalletService: ledger, deposito, saque e integracao com Mercado Pago.
+- PortfolioService: resumo, lista de posicoes, lista de fills e calculos de potencial/PnL/taxa de acerto.
+- PortfolioRepository: consultas paginadas de posicoes/fills, lookup de mercados e persistencia de snapshot.
+- ReceiptService: padroniza recibos e faz backfill.
+- MercadoPagoService: chamada HTTP ao MP, tratamento de status e webhook.
+- WebhookService: grava e marca processamento de webhooks.
+- EmailService/Queue: fila persistente e envio SMTP.
+- AuditService: logs de auditoria.
+
+## 9) Configuracoes principais
+Appsettings (Product.Api/appsettings*.json)
+- ConnectionStrings: DefaultConnection (Postgres)
+- IdentityTokens: expiracoes de tokens
+- GoogleAuth: ClientId
+- Frontend: BaseUrl
+- Email: Host/Port/Username/Password/From
+
+Options (Product.Business/Options)
+- MercadoPagoOptions: MP_ACCESS_TOKEN_TEST/MP_ACCESS_TOKEN_LIVE/MP_WEBHOOK_SECRET etc.
+- RiskTermsCompanyOptions: dados da empresa para template de termos
+- MaintenanceOptions: intervalos de limpeza e backfill
+
+## 10) Observacoes tecnicas
+- JSON de decimal e enviado como string com 6 casas (converter customizado).
+- Idempotency-Key e obrigatorio para deposito e saque (protege duplicidade).
+- Ledger e receipts garantem historico imutavel de movimentos.
+- Portfolio usa payout nominal de 1.00 por contrato para potencial e PnL realizado.
+- Portfolio resolve resultado (yes/no) por status/resolutionSource do market quando encerrado.
+- Snapshot de portfolio e best-effort: falha de escrita nao quebra resposta de summary.
+- SignalR permite push de atualizacoes de mercado e saldo.
+- OnModelCreating converte enums para string automaticamente.
+
+## 11) E uma API REST?
+Sim. Esta e uma API REST.
+
+O que significa REST aqui:
+- Usa HTTP como protocolo.
+- Usa verbos HTTP para acoes: GET, POST, PUT, DELETE.
+- Cada rota representa um recurso.
+- Respostas sao JSON.
+- Cada request carrega os dados e a autenticacao necessários.
+- As rotas estao versionadas com `/api/v1`.
+
+Onde isso aparece no codigo:
+- Controllers com `[ApiController]` e `[Route]` em `src/Product.Api/Controllers/*.cs`.
+- Metodos com `[HttpGet]`, `[HttpPost]`, `[HttpPut]`, `[HttpDelete]`.
+- Pipeline HTTP em `src/Product.Api/Program.cs` e `src/Product.Api/Configuration/PipelineConfiguration.cs`.
+- Resposta padrao em `src/Product.Api/Extensions/ApiResultExtensions.cs` e `src/Product.Contracts/ResponseEnvelope.cs`.
+
+Exemplos diretos no projeto:
+- `AuthController` usa `Route("api/v1/auth")` e cria rotas de login, cadastro e tokens.
+- `UsersController` usa `Route("api/v1/users")` e cria rotas de perfil.
+- `MarketsController` usa `Route("api/v1/markets")` e cria rotas de mercado.
+- `WalletController` usa `Route("api/v1/wallet")` e cria rotas de carteira.
+- `PortfolioController` usa `Route("api/v1/portfolio")` e cria rotas de resumo e historico.
+
+Como uma chamada REST funciona aqui (passo a passo):
+- Cliente envia HTTP para `/api/v1/...` com JSON no body (quando for POST/PUT).
+- O ASP.NET cria o Controller e chama o metodo certo pelo atributo `[Http...]`.
+- O Controller chama um Service (classe de negocio).
+- O Service chama um Repository para buscar/salvar no banco.
+- O Service retorna um resultado para o Controller.
+- O Controller retorna JSON com status code (200, 400, 401, 404, etc).
+
+Formato de resposta:
+- Sucesso normalmente retorna `ResponseEnvelope` com `data` e opcional `meta`.
+- Erros retornam `ProblemDetails` com `status` e `title`.
+
+## 12) E POO?
+Sim. O projeto usa POO (Programacao Orientada a Objetos).
+
+Conceitos de POO presentes:
+- Classe: define propriedades e metodos.
+- Objeto: instancia de uma classe em memoria.
+- Encapsulamento: a classe expõe metodos e esconde detalhes internos.
+- Heranca: uma classe base define dados comuns e outras classes herdam.
+- Interface: define um contrato para classes diferentes.
+- Polimorfismo: o codigo usa a interface e nao depende da classe concreta.
+
+Onde isso aparece no codigo:
+- Classes de entidades em `src/Product.Data/Models/*.cs`.
+- Classes de servicos em `src/Product.Business/Services/*.cs`.
+- Classes de repositorio em `src/Product.Data/Repositories/*.cs`.
+- Interfaces em `src/Product.Business/Interfaces/*.cs`.
+- Controllers em `src/Product.Api/Controllers/*.cs`.
+- DTOs em `src/Product.Contracts/**/*.cs`.
+
+Exemplos claros de classes (POO):
+- Entidades: `ApplicationUser`, `Market`, `Receipt`, `PaymentIntent`, `PositionFill`, `PortfolioSnapshot`.
+- Servicos: `AuthService`, `UserService`, `MarketService`, `WalletService`, `PortfolioService`.
+- Repositorios: `UserRepository`, `MarketRepository`, `WalletRepository`, `PortfolioRepository`.
+- DTOs: `LoginRequest`, `MarketResponse`, `ReceiptItem`, `PortfolioSummaryResponse`.
+
+Exemplos de heranca:
+- `Entity<T>` (base) fica em `src/Product.Common/Entities/Entity.cs`.
+- `BaseEntity<T>` e `AuditedUserEntity<T>` ficam em `src/Product.Common/Entities/`.
+- `ApplicationUser` herda `AuditedUserEntity<Guid>` que herda `IdentityUser<Guid>`.
+
+Exemplos de interfaces:
+- `IAuthService` implementado por `AuthService`.
+- `IUserService` implementado por `UserService`.
+- `IWalletService` implementado por `WalletService`.
+- `IPortfolioService` implementado por `PortfolioService`.
+- `IMercadoPagoService` implementado por `MercadoPagoService`.
+
+Como os objetos sao criados (POO em execucao):
+- O ASP.NET cria os Controllers quando chega um request.
+- O DI cria Services e Repositories registrados em `DependencyInjection.cs`.
+- O EF Core cria objetos de entidades quando consulta o banco.
+- O codigo cria objetos com `new` em varios pontos, por exemplo `new Receipt`, `new LedgerEntry`, `new Market`.
+
+Resumo POO em frase simples:
+- O projeto organiza tudo em classes e objetos, e o runtime cria instancias dessas classes para executar as regras.

@@ -419,20 +419,20 @@ public class DatabaseSeeder(
     private static SeedUserData GetAdminSeed()
     {
         return new SeedUserData(
-            "admin@product.local",
-            "admin",
-            "Admin L3",
+            "predizer@predizer.com",
+            "predizer-admin",
+            "Predizer Admin L3",
             "ChangeMe123!",
-            "00000000000",
-            "11900000000",
+            "04205009011",
+            "11996987654",
             new SeedAddress(
-                "00000000",
-                "N/A",
-                "N/A",
+                "01311-200",
+                "Avenida Paulista",
+                "Bela Vista",
                 string.Empty,
                 string.Empty,
-                "N/A",
-                "NA",
+                "Sao Paulo",
+                "SP",
                 "BR"
             ),
             new SeedBankAccount(
@@ -442,7 +442,7 @@ public class DatabaseSeeder(
                 "123456",
                 "7",
                 "CHECKING",
-                "admin@product.local"
+                "predizer@predizer.com"
             )
         );
     }
@@ -450,20 +450,20 @@ public class DatabaseSeeder(
     private static SeedUserData GetUserSeed()
     {
         return new SeedUserData(
-            "user@product.local",
-            "user",
-            "User",
+            "johndoe@predizer.com",
+            "johndoe",
+            "John Doe Smith",
             "ChangeMe123!",
-            "11111111111",
-            "11999999999",
+            "16864772012",
+            "21997123456",
             new SeedAddress(
-                "01001000",
-                "Rua Exemplo",
-                "Centro",
+                "22452330",
+                "Rua João Paulo I",
+                "Vidigal",
                 "100",
                 "Apto 12",
-                "Sao Paulo",
-                "SP",
+                "Rio de Janeiro",
+                "RJ",
                 "BR"
             ),
             new SeedBankAccount(
@@ -473,7 +473,7 @@ public class DatabaseSeeder(
                 "987654",
                 "0",
                 "CHECKING",
-                "user@product.local"
+                "johndoe@predizer.com"
             )
         );
     }

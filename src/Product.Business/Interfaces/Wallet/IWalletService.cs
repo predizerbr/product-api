@@ -8,6 +8,7 @@ namespace Product.Business.Interfaces.Wallet;
 public interface IWalletService
 {
     Task<ApiResult> GetBalancesApiAsync(ClaimsPrincipal principal, CancellationToken ct = default);
+    Task<ApiResult> GetSummaryApiAsync(ClaimsPrincipal principal, CancellationToken ct = default);
 
     Task<ApiResult> GetLedgerApiAsync(
         ClaimsPrincipal principal,
@@ -59,6 +60,11 @@ public interface IWalletService
     );
 
     Task<ServiceResult<IReadOnlyCollection<WalletBalanceResponse>>> GetBalancesAsync(
+        Guid userId,
+        CancellationToken ct = default
+    );
+
+    Task<ServiceResult<WalletSummaryResponse>> GetSummaryAsync(
         Guid userId,
         CancellationToken ct = default
     );

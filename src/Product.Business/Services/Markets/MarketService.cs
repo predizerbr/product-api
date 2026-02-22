@@ -15,6 +15,7 @@ using Product.Contracts.Markets;
 using Product.Data.Database.Contexts;
 using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Markets;
+using Product.Data.Models.Portfolio;
 using Product.Data.Models.Wallet;
 
 namespace Product.Business.Services.Markets;
@@ -135,8 +136,10 @@ public class MarketService : IMarketService
         if (!string.IsNullOrWhiteSpace(req.Search))
         {
             var s = req.Search.Trim();
+            var like = $"{s}%";
             q = q.Where(m =>
-                m.Title.Contains(s) || (m.Description != null && m.Description.Contains(s))
+                EF.Functions.ILike(m.Title, like)
+                || (m.Description != null && EF.Functions.ILike(m.Description, like))
             );
         }
 
@@ -359,6 +362,26 @@ public class MarketService : IMarketService
                 CreatedAt = DateTimeOffset.UtcNow,
             };
             _db.MarketTransactions.Add(txRecord);
+
+            var fill = new PositionFill
+            {
+                Id = Guid.NewGuid(),
+                PositionId = pos.Id,
+                UserId = userId,
+                MarketId = marketId,
+                Side = side,
+                Type = "BUY",
+                Contracts = contracts,
+                Price = price,
+                GrossAmount = spent,
+                FeeAmount = 0m,
+                NetAmount = net,
+                Source = "ORDER",
+                OrderId = null,
+                IdempotencyKey = idempotencyKey,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            _db.PositionFills.Add(fill);
 
             market.VolumeTotal += spent;
             if (side == "yes")

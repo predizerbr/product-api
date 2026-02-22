@@ -62,6 +62,17 @@ public interface IWalletRepository
         Guid[] accountIds,
         CancellationToken ct = default
     );
+    Task<decimal> GetTotalDepositedAsync(
+        Guid userId,
+        string currency,
+        CancellationToken ct = default
+    );
+    Task<decimal> GetTotalWithdrawnAsync(
+        Guid userId,
+        string currency,
+        CancellationToken ct = default
+    );
+    Task<decimal> GetTotalBoughtAsync(Guid userId, CancellationToken ct = default);
     Task<List<LedgerEntry>> GetLedgerEntriesAsync(
         Guid[] accountIds,
         DateTimeOffset? cursorTime,

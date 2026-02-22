@@ -1,0 +1,51 @@
+erDiagram
+    ASPNETUSERS {
+      uuid Id PK
+    }
+
+    ORDERS {
+      uuid Id PK
+      string OrderId
+      decimal Amount
+      string Currency
+      string Provider
+      long ProviderPaymentId
+      string ProviderPaymentIdText
+      datetime ExpiresAtUtc
+      string Status
+      string PaymentMethod
+    }
+
+    MPWEBHOOKEVENT {
+      uuid Id PK
+      string Provider
+      string EventType
+      long ProviderPaymentId
+      string OrderId
+      string PayloadHash
+      bool Processed
+      int AttemptCount
+      datetime ReceivedAt
+    }
+
+    AUDITLOGS {
+      uuid Id PK
+      uuid UserId
+      string Action
+      string Entity
+      uuid EntityId
+      string Ip
+      string UserAgent
+    }
+
+    QUEUEDEMAILS {
+      uuid Id PK
+      string ToEmail
+      string Subject
+      int AttemptCount
+      datetime SentAt
+      string LastError
+    }
+
+    ORDERS ||--o{ MPWEBHOOKEVENT : logical_order_id
+    ASPNETUSERS ||--o{ AUDITLOGS : logical_user_id

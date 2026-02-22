@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Product.Common.Enums;
 using Product.Data.Database.Contexts;
 using Product.Data.Interfaces.Repositories;
 using Product.Data.Models.Users;
@@ -222,6 +223,43 @@ public class WalletRepository(AppDbContext db) : IWalletRepository
             .ToListAsync(ct);
 
         return balances.ToDictionary(x => x.AccountId, x => x.Balance);
+    }
+
+    public async Task<decimal> GetTotalDepositedAsync(
+        Guid userId,
+        string currency,
+        CancellationToken ct = default
+    )
+    {
+        return await db
+                .PaymentIntents.Where(x =>
+                    x.UserId == userId
+                    && x.Currency == currency
+                    && x.Status == PaymentIntentStatus.APPROVED
+                )
+                .SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
+    }
+
+    public async Task<decimal> GetTotalWithdrawnAsync(
+        Guid userId,
+        string currency,
+        CancellationToken ct = default
+    )
+    {
+        return await db
+                .Withdrawals.Where(x =>
+                    x.UserId == userId
+                    && x.Currency == currency
+                    && (x.Status == WithdrawalStatus.APPROVED || x.Status == WithdrawalStatus.PAID)
+                )
+                .SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
+    }
+
+    public async Task<decimal> GetTotalBoughtAsync(Guid userId, CancellationToken ct = default)
+    {
+        return await db
+                .MarketTransactions.Where(x => x.UserId == userId && x.Type == "buy")
+                .SumAsync(x => (decimal?)x.NetAmount, ct) ?? 0m;
     }
 
     public async Task<List<LedgerEntry>> GetLedgerEntriesAsync(
